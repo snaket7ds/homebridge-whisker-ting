@@ -1,0 +1,21 @@
+This plugin uses the unofficial Whisker Labs API endpoint and response-field
+mapping documented by the archived MIT-licensed project:
+
+  whisker-private-api
+  Copyright (c) 2023 Milan Mehra
+  https://github.com/milanmdev/whisker-private-api
+
+This plugin also references the Whisker/Cognito login details and API access
+pattern from the MIT-licensed Home Assistant integration:
+
+  ha-whisker-ting
+  https://github.com/simplytoast1/ha-whisker-ting
+
+Additional hazard parsing behavior was referenced from the MIT-licensed Home
+Assistant integration:
+
+  whisker_ting
+  Copyright (c) 2025 Adam Thompson
+  https://github.com/adamjthompson/whisker_ting
+
+No Whisker Labs code, SDK, or official API documentation is included.
