@@ -19,14 +19,14 @@ set of HomeKit services.
 
 ## Exposed HomeKit Services
 
-- `Electrical Fire Alert` as a HomeKit smoke sensor. Ting's main electrical
+- `Ting Electrical Fire Alert` as a HomeKit smoke sensor. Ting's main electrical
   fire hazard signal. It becomes active when EFH level is above `0`, unless the
   event is marked `ReviewedNotFire`.
 - `Ting Fire Alert` as a HomeKit contact sensor. Ting's broad device-level fire
   event flag from `isFire`.
-- `Power Quality Alert` as a HomeKit contact sensor. A site-level power quality
+- `Ting Power Quality Alert` as a HomeKit contact sensor. A site-level power quality
   problem. This is not necessarily a fire alert.
-- `Utility Fire Alert` as a HomeKit contact sensor. Ting's utility-side fire
+- `Ting Utility Fire Alert` as a HomeKit contact sensor. Ting's utility-side fire
   hazard signal. It becomes active when UFH level is above `0`.
 - `Ting Learning Mode` as a HomeKit occupancy sensor. Ting is still learning
   your home's electrical baseline. This is calibration/status, not a hazard.

@@ -7,10 +7,10 @@ const HAP_POWER_QUALITY_SUBTYPE = 'power-quality-hazard';
 const HAP_UTILITY_FIRE_HAZARD_SUBTYPE = 'utility-fire-hazard';
 const HAP_LEARNING_MODE_SUBTYPE = 'learning-mode';
 const SERVICE_NAMES = {
-  electricalFireHazard: 'Electrical Fire Alert',
+  electricalFireHazard: 'Ting Electrical Fire Alert',
   fireHazard: 'Ting Fire Alert',
-  powerQualityHazard: 'Power Quality Alert',
-  utilityFireHazard: 'Utility Fire Alert',
+  powerQualityHazard: 'Ting Power Quality Alert',
+  utilityFireHazard: 'Ting Utility Fire Alert',
   learningMode: 'Ting Learning Mode',
 };
 
@@ -224,12 +224,23 @@ export class WhiskerTingPlatform {
       this.log.info('Renamed Ting service:', name);
     }
 
-    const nameCharacteristic = service.getCharacteristic(this.Characteristic.Name);
-    if (nameCharacteristic?.value !== name) {
-      service.updateCharacteristic(this.Characteristic.Name, name);
-    }
+    this.updateServiceName(service, name);
 
     return service;
+  }
+
+  updateServiceName(service, name) {
+    const nameCharacteristics = [
+      this.Characteristic.Name,
+      this.Characteristic.ConfiguredName,
+    ].filter(Boolean);
+
+    for (const characteristic of nameCharacteristics) {
+      const nameCharacteristic = service.getCharacteristic(characteristic);
+      if (nameCharacteristic?.value !== name) {
+        service.updateCharacteristic(characteristic, name);
+      }
+    }
   }
 
   removeLegacyContactSensors(accessory) {
@@ -245,10 +256,17 @@ export class WhiskerTingPlatform {
 
   removeRenamedServices(accessory) {
     const renamedServices = new Map([
-      [this.Service.SmokeSensor.UUID, new Set(['Electrical Fire Hazard', SERVICE_NAMES.electricalFireHazard])],
-      [this.Service.OccupancySensor.UUID, new Set(['Learning Mode', SERVICE_NAMES.learningMode])],
+      [this.Service.SmokeSensor.UUID, new Set([
+        'Electrical Fire Hazard',
+        'Electrical Fire Alert',
+        SERVICE_NAMES.electricalFireHazard,
+      ])],
+      [this.Service.OccupancySensor.UUID, new Set([
+        'Learning Mode',
+        SERVICE_NAMES.learningMode,
+      ])],
     ]);
-    const oldNames = new Set(['Electrical Fire Hazard', 'Learning Mode']);
+    const oldNames = new Set(['Electrical Fire Hazard', 'Electrical Fire Alert', 'Learning Mode']);
 
     for (const service of [...accessory.services]) {
       const names = renamedServices.get(service.UUID);
@@ -274,6 +292,8 @@ export class WhiskerTingPlatform {
         'Ting Account Owner',
         'API Key Update Allowed',
         'API Key Updates Allowed',
+        'Power Quality Alert',
+        'Utility Fire Alert',
       ])],
     ]);
 
