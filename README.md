@@ -54,6 +54,25 @@ Hazard state is parsed from Whisker's EFH/UFH status levels. EFH entries marked
 }
 ```
 
+Configuration fields:
+
+- `platform`: Must be `WhiskerTing`. This tells Homebridge which platform
+  plugin should load this config block.
+- `name`: The accessory name shown by Homebridge and used as the default Ting
+  accessory name in HomeKit.
+- `username`: The email address used to sign in to the Ting app.
+- `password`: The password used to sign in to the Ting app. Homebridge stores
+  this in its config, so protect access to your Homebridge instance.
+- `pollInterval`: How often, in seconds, the plugin checks Whisker for updated
+  Ting status. The minimum is `30`; the default is `60`.
+- `_bridge`: Optional Homebridge child bridge settings. Running this plugin as
+  a child bridge isolates it from other plugins and lets it restart separately.
+- `_bridge.name`: The child bridge name shown in Homebridge.
+- `_bridge.username`: The child bridge MAC-style identifier. It must be unique
+  across your Homebridge setup.
+- `_bridge.port`: The network port used by the child bridge. It must not
+  conflict with another Homebridge bridge or service.
+
 Generate a random Homebridge child-bridge username/MAC address:
 
 ```bash
@@ -82,6 +101,38 @@ npm run lint
 npm test
 npm pack --dry-run
 ```
+
+## Release Notes
+
+### 1.0.3
+
+- Added release notes to the README.
+- Added brief descriptions for each configuration field, including optional
+  child bridge settings.
+
+### 1.0.2
+
+- Renamed HomeKit services so Ting accessories are easier to identify in Apple
+  Home:
+  - `Ting Electrical Fire Alert`
+  - `Ting Fire Alert`
+  - `Ting Power Quality Alert`
+  - `Ting Utility Fire Alert`
+  - `Ting Learning Mode`
+- Added HomeKit `ConfiguredName` updates in addition to `Name`, which helps
+  Apple Home show the intended labels instead of generic labels such as
+  `Contact Sensor`.
+- Added cleanup for older cached service names so existing Homebridge installs
+  can migrate to the clearer labels.
+
+### 1.0.1
+
+- Added the npm lockfile for reproducible installs.
+
+### 1.0.0
+
+- Initial public release with Whisker sign-in, Ting status polling, conservative
+  hazard mapping, and HomeKit smoke/contact/occupancy service exposure.
 
 ## Notes
 
