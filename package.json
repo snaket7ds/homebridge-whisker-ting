@@ -5,6 +5,14 @@
   "description": "Homebridge plugin for Whisker Labs Ting sensors with conservative HomeKit hazard and status mapping.",
   "type": "module",
   "main": "src/index.js",
+  "files": [
+    "src/",
+    "config.schema.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "engines": {
     "node": ">=18.0.0",
     "homebridge": ">=1.8.0 || >=2.0.0"
@@ -16,6 +24,11 @@
     "whisker",
     "whisker-labs"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/snaket7ds/homebridge-whisker-ting.git"
+  },
+  "homepage": "https://github.com/snaket7ds/homebridge-whisker-ting#readme",
   "license": "MIT",
   "scripts": {
     "lint": "node --check src/index.js && node --check src/platform.js && node --check src/whisker-client.js",
