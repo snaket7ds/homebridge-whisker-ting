@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.4
+
+- Include `CHANGELOG.md` in the published npm package.
+- Add repository and homepage metadata for npm and Homebridge plugin pages.
+- Add an explicit package file list so npm publishes only the intended plugin
+  files.
+
 ## 1.0.3
 
 - Added release notes to the README.
