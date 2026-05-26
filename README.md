@@ -1,6 +1,6 @@
 # Homebridge Whisker Ting
 
-Homebridge Whisker Ting exposes Whisker Labs Ting sensor status in Apple Home
+Homebridge Whisker Ting exposes Whisker Labs Ting sensor (https://www.tingfire.com/) status in Apple Home
 through Homebridge. It focuses on conservative hazard visibility rather than
 replacing the Ting app or Whisker Labs monitoring.
 
@@ -103,6 +103,13 @@ npm pack --dry-run
 ```
 
 ## Release Notes
+
+### 1.0.4
+
+    Include CHANGELOG.md in the published npm package.
+    Add repository and homepage metadata for npm and Homebridge plugin pages.
+    Add an explicit package file list so npm publishes only the intended plugin files.
+
 
 ### 1.0.3
 
