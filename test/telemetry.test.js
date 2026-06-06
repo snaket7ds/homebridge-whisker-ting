@@ -86,6 +86,25 @@ try {
   });
   await disabledClient.initialize();
 
+  const defaultEnabledRequests = [];
+  const defaultEnabledClient = new TelemetryClient({
+    endpointUrl: 'https://telemetry.example/events',
+    pluginVersion: '1.2.3',
+    storagePath: await mkdtemp(join(os.tmpdir(), 'whisker-ting-telemetry-default-')),
+    fetchImpl: async (url, options) => {
+      defaultEnabledRequests.push({ url, body: JSON.parse(options.body) });
+      return { ok: true };
+    },
+  });
+  try {
+    await defaultEnabledClient.initialize();
+    assert.equal(defaultEnabledRequests.length, 2);
+    assert.equal(defaultEnabledRequests[0].body.eventType, 'plugin_install');
+    assert.equal(defaultEnabledRequests[1].body.eventType, 'plugin_start');
+  } finally {
+    await rm(defaultEnabledClient.storagePath, { recursive: true, force: true });
+  }
+
   console.log('telemetry tests passed');
 } finally {
   await rm(tempDir, { recursive: true, force: true });

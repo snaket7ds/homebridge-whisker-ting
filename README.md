@@ -137,6 +137,10 @@ npm pack --dry-run
 
 ## Release Notes
 
+### 1.0.10
+
+- Optimizing code performance and fixing issues.
+
 ### 1.0.9
 
 - Removed the telemetry endpoint URL from plugin settings and README examples.

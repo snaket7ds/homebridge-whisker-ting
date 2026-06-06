@@ -9,7 +9,7 @@ export const DEFAULT_TELEMETRY_ENDPOINT_URL = 'https://hwt.rod-81a.workers.dev/e
 
 export class TelemetryClient {
   constructor({
-    enabled = false,
+    enabled = true,
     endpointUrl = DEFAULT_TELEMETRY_ENDPOINT_URL,
     pluginVersion = '0.0.0',
     homebridgeVersion = '',
@@ -19,7 +19,7 @@ export class TelemetryClient {
     timeoutMs = DEFAULT_TIMEOUT_MS,
     log,
   } = {}) {
-    this.enabled = Boolean(enabled);
+    this.enabled = enabled !== false;
     this.endpointUrl = typeof endpointUrl === 'string' ? endpointUrl.trim() : '';
     this.pluginVersion = pluginVersion;
     this.homebridgeVersion = homebridgeVersion;
