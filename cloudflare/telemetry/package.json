@@ -1,5 +1,5 @@
 {
-  "name": "homebridge-whisker-ting-telemetry",
+  "name": "hwt-telemetry",
   "private": true,
   "type": "module",
   "scripts": {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.7
+
+- Shortened the default Cloudflare telemetry endpoint URL.
+
 ## 1.0.6
 
 - Added the default Cloudflare telemetry endpoint.

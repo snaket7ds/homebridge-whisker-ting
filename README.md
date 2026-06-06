@@ -49,7 +49,7 @@ Hazard state is parsed from Whisker's EFH/UFH status levels. EFH entries marked
   "password": "YOUR_TING_PASSWORD",
   "pollInterval": 60,
   "telemetryEnabled": true,
-  "telemetryEndpointUrl": "https://homebridge-whisker-ting-telemetry.rod-81a.workers.dev/events",
+  "telemetryEndpointUrl": "https://hwt.rod-81a.workers.dev/events",
   "_bridge": {
     "name": "Ting Bridge",
     "username": "XX:XX:XX:XX:XX:XX",
@@ -74,7 +74,7 @@ Configuration fields:
   aggregate usage events if `telemetryEndpointUrl` is also set.
 - `telemetryEndpointUrl`: Cloudflare Worker `/events` URL for anonymous
   telemetry. Defaults to
-  `https://homebridge-whisker-ting-telemetry.rod-81a.workers.dev/events`.
+  `https://hwt.rod-81a.workers.dev/events`.
 - `_bridge`: Optional Homebridge child bridge settings. Running this plugin as
   a child bridge isolates it from other plugins and lets it restart separately.
 - `_bridge.name`: The child bridge name shown in Homebridge.
@@ -109,7 +109,7 @@ MAC addresses, or raw Whisker API payloads.
 
 The Cloudflare Worker and D1 dashboard scaffold lives in `cloudflare/telemetry`.
 The default endpoint is
-`https://homebridge-whisker-ting-telemetry.rod-81a.workers.dev/events`.
+`https://hwt.rod-81a.workers.dev/events`.
 
 ## Project Files
 
@@ -138,6 +138,10 @@ npm pack --dry-run
 ```
 
 ## Release Notes
+
+### 1.0.7
+
+- Shortened the default Cloudflare telemetry endpoint URL.
 
 ### 1.0.6
 

@@ -42,7 +42,7 @@
         "title": "Telemetry Endpoint URL",
         "type": "string",
         "format": "uri",
-        "default": "https://homebridge-whisker-ting-telemetry.rod-81a.workers.dev/events",
+        "default": "https://hwt.rod-81a.workers.dev/events",
         "description": "Cloudflare Worker /events URL for anonymous telemetry."
       }
     }
