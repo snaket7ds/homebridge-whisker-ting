@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.8
+
+- Added HashGuard-style live-running telemetry dashboard behavior with
+  `plugin_ping` heartbeat events.
+
 ## 1.0.7
 
 - Shortened the default Cloudflare telemetry endpoint URL.

@@ -22,6 +22,8 @@ The dashboard uses these events:
 - `plugin_install`: sent once per anonymous install ID.
 - `plugin_start`: sent when the plugin starts after a successful Whisker status
   read.
+- `plugin_ping`: sent every five minutes while the plugin is running; used for
+  the live-running dashboard count.
 - `status_update`: sent when the coarse Ting status changes, or at most once per
   day when status is unchanged.
 
@@ -70,4 +72,5 @@ Open:
 https://your-worker.workers.dev/dashboard?token=YOUR_DASHBOARD_TOKEN
 ```
 
-The dashboard reads only aggregate counts from `/api/summary`.
+The dashboard is also available at `/` with the same token. It reads only
+aggregate counts from `/api/summary`.

@@ -98,6 +98,8 @@ Cloudflare Worker endpoint:
 
 - `plugin_install`: once per random install ID.
 - `plugin_start`: when the plugin starts after a successful Whisker status read.
+- `plugin_ping`: every five minutes while the plugin is running, used for the
+  live-running dashboard count.
 - `status_update`: when coarse Ting status changes, or at most once per day when
   status is unchanged.
 
@@ -110,6 +112,8 @@ MAC addresses, or raw Whisker API payloads.
 The Cloudflare Worker and D1 dashboard scaffold lives in `cloudflare/telemetry`.
 The default endpoint is
 `https://hwt.rod-81a.workers.dev/events`.
+The matching dashboard is available at `/dashboard` or `/` on the same Worker
+host when opened with the dashboard token.
 
 ## Project Files
 
@@ -138,6 +142,11 @@ npm pack --dry-run
 ```
 
 ## Release Notes
+
+### 1.0.8
+
+- Added HashGuard-style live-running telemetry dashboard behavior with
+  `plugin_ping` heartbeat events.
 
 ### 1.0.7
 

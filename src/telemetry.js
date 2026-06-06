@@ -95,6 +95,10 @@ export class TelemetryClient {
     return false;
   }
 
+  async recordHeartbeat() {
+    return this.sendEvent('plugin_ping');
+  }
+
   async sendEvent(eventType, data = {}) {
     if (!this.canSend()) {
       return false;

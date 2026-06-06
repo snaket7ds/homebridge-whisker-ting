@@ -7,6 +7,7 @@ const HAP_FIRE_HAZARD_SUBTYPE = 'fire-hazard';
 const HAP_POWER_QUALITY_SUBTYPE = 'power-quality-hazard';
 const HAP_UTILITY_FIRE_HAZARD_SUBTYPE = 'utility-fire-hazard';
 const HAP_LEARNING_MODE_SUBTYPE = 'learning-mode';
+const TELEMETRY_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 const SERVICE_NAMES = {
   electricalFireHazard: 'Ting Electrical Fire Alert',
   fireHazard: 'Ting Fire Alert',
@@ -47,6 +48,9 @@ export class WhiskerTingPlatform {
       if (this.pollTimer) {
         clearInterval(this.pollTimer);
       }
+      if (this.telemetryHeartbeatTimer) {
+        clearInterval(this.telemetryHeartbeatTimer);
+      }
     });
   }
 
@@ -81,6 +85,12 @@ export class WhiskerTingPlatform {
         this.log.warn('Failed to poll Ting status:', error.message);
       });
     }, this.pollIntervalMs);
+
+    this.telemetryHeartbeatTimer = setInterval(() => {
+      this.telemetry.recordHeartbeat().catch((error) => {
+        this.log.debug('Failed to record anonymous Ting telemetry heartbeat:', error.message);
+      });
+    }, TELEMETRY_HEARTBEAT_INTERVAL_MS);
   }
 
   configureServices(accessory, status) {

@@ -73,6 +73,10 @@ try {
   assert.equal(requests.length, 4);
   assert.equal(requests[3].body.data.fire_hazard, true);
 
+  await client.recordHeartbeat();
+  assert.equal(requests.length, 5);
+  assert.equal(requests[4].body.eventType, 'plugin_ping');
+
   const disabledClient = new TelemetryClient({
     enabled: false,
     endpointUrl: 'https://telemetry.example/events',
