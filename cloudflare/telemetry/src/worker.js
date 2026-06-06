@@ -163,7 +163,7 @@ function renderDashboard() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Whisker Ting Telemetry</title>
+  <title>Whisker Ting Usage</title>
   <style>
     body { margin: 0; font-family: Segoe UI, Arial, sans-serif; background: #f4f6f8; color: #1f2933; }
     header { background: #171717; color: white; padding: 22px 28px; }
@@ -183,7 +183,7 @@ function renderDashboard() {
 </head>
 <body>
   <header>
-    <h1>Whisker Ting Telemetry</h1>
+    <h1>Whisker Ting Usage</h1>
     <div class="subtle" id="generated">Loading...</div>
   </header>
   <main>
