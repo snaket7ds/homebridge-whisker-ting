@@ -1,4 +1,5 @@
-import { PLUGIN_NAME, PLATFORM_NAME } from './settings.js';
+import { PLUGIN_NAME, PLATFORM_NAME, PLUGIN_VERSION } from './settings.js';
+import { TelemetryClient } from './telemetry.js';
 import { WhiskerClient } from './whisker-client.js';
 
 const HAP_ELECTRICAL_FIRE_HAZARD_SUBTYPE = 'electrical-fire-hazard';
@@ -26,6 +27,14 @@ export class WhiskerTingPlatform {
       username: this.config.username,
       password: this.config.password,
     });
+    this.telemetry = new TelemetryClient({
+      enabled: this.config.telemetryEnabled,
+      endpointUrl: this.config.telemetryEndpointUrl,
+      pluginVersion: PLUGIN_VERSION,
+      homebridgeVersion: api.serverVersion,
+      storagePath: api.user?.storagePath?.(),
+      log,
+    });
     this.pollIntervalMs = Math.max(Number(this.config.pollInterval || 60), 30) * 1000;
 
     this.api.on('didFinishLaunching', () => {
@@ -47,6 +56,9 @@ export class WhiskerTingPlatform {
 
   async discoverAndStart() {
     const status = await this.client.getStatus();
+    await this.telemetry.initialize().catch((error) => {
+      this.log.debug('Failed to initialize anonymous Ting telemetry:', error.message);
+    });
     const uuid = this.api.hap.uuid.generate(`${PLUGIN_NAME}-${status.siteId}-${status.serialNumber}`);
     let accessory = this.accessories.get(uuid);
 
@@ -61,6 +73,7 @@ export class WhiskerTingPlatform {
 
     this.configureServices(accessory, status);
     this.updateServices(accessory, status);
+    this.recordTelemetryStatus(status);
     this.unregisterStaleAccessories(uuid);
 
     this.pollTimer = setInterval(() => {
@@ -122,6 +135,7 @@ export class WhiskerTingPlatform {
   async poll(accessory) {
     const status = await this.client.getStatus();
     this.updateServices(accessory, status);
+    this.recordTelemetryStatus(status);
   }
 
   updateServices(accessory, status) {
@@ -203,6 +217,12 @@ export class WhiskerTingPlatform {
       `powerQuality=${status.powerQualityHazard}, learning=${status.learningMode}, ` +
       `reviewedNotFire=${status.reviewedNotFire}`,
     );
+  }
+
+  recordTelemetryStatus(status) {
+    this.telemetry.recordStatus(status).catch((error) => {
+      this.log.debug('Failed to record anonymous Ting telemetry:', error.message);
+    });
   }
 
   getOrAddService(accessory, serviceType, name, subtype) {

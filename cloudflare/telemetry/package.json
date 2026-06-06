@@ -1,0 +1,12 @@
+{
+  "name": "homebridge-whisker-ting-telemetry",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "schema": "wrangler d1 execute whisker_ting_telemetry --file=./schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

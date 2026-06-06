@@ -1,0 +1,8 @@
+name = "homebridge-whisker-ting-telemetry"
+main = "src/worker.js"
+compatibility_date = "2026-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "whisker_ting_telemetry"
+database_id = "replace-with-d1-database-id"

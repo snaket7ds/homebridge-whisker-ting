@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.5
+
+- Added optional anonymous telemetry support with a Cloudflare Worker/D1
+  dashboard scaffold.
+- Added `telemetryEnabled` and `telemetryEndpointUrl` configuration fields.
+
 ## 1.0.4
 
 - Include `CHANGELOG.md` in the published npm package.
