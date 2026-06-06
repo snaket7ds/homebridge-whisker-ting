@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.6
+
+- Added the default Cloudflare telemetry endpoint.
+
 ## 1.0.5
 
 - Added optional anonymous telemetry support with a Cloudflare Worker/D1

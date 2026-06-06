@@ -5,11 +5,12 @@ import os from 'node:os';
 
 const DEFAULT_STATE_FILE = 'whisker-ting-telemetry.json';
 const DEFAULT_TIMEOUT_MS = 5000;
+export const DEFAULT_TELEMETRY_ENDPOINT_URL = 'https://homebridge-whisker-ting-telemetry.rod-81a.workers.dev/events';
 
 export class TelemetryClient {
   constructor({
     enabled = false,
-    endpointUrl = '',
+    endpointUrl = DEFAULT_TELEMETRY_ENDPOINT_URL,
     pluginVersion = '0.0.0',
     homebridgeVersion = '',
     storagePath = '',

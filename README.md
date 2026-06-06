@@ -49,7 +49,7 @@ Hazard state is parsed from Whisker's EFH/UFH status levels. EFH entries marked
   "password": "YOUR_TING_PASSWORD",
   "pollInterval": 60,
   "telemetryEnabled": true,
-  "telemetryEndpointUrl": "",
+  "telemetryEndpointUrl": "https://homebridge-whisker-ting-telemetry.rod-81a.workers.dev/events",
   "_bridge": {
     "name": "Ting Bridge",
     "username": "XX:XX:XX:XX:XX:XX",
@@ -72,8 +72,9 @@ Configuration fields:
 - `telemetryEnabled`: Optional. Not recommended to disable; helpful for future
   development; no personal data. When `true`, the plugin sends anonymous
   aggregate usage events if `telemetryEndpointUrl` is also set.
-- `telemetryEndpointUrl`: Optional. Cloudflare Worker `/events` URL for
-  anonymous telemetry.
+- `telemetryEndpointUrl`: Cloudflare Worker `/events` URL for anonymous
+  telemetry. Defaults to
+  `https://homebridge-whisker-ting-telemetry.rod-81a.workers.dev/events`.
 - `_bridge`: Optional Homebridge child bridge settings. Running this plugin as
   a child bridge isolates it from other plugins and lets it restart separately.
 - `_bridge.name`: The child bridge name shown in Homebridge.
@@ -92,8 +93,8 @@ node -e "console.log([...crypto.getRandomValues(new Uint8Array(6))].map((b,i)=>(
 
 Telemetry can be disabled in the plugin settings. It is not recommended to
 disable because it is helpful for future development and sends no personal data.
-When enabled and configured with an endpoint URL, the plugin sends best-effort
-anonymous events to the configured Cloudflare Worker endpoint:
+When enabled, the plugin sends best-effort anonymous events to the configured
+Cloudflare Worker endpoint:
 
 - `plugin_install`: once per random install ID.
 - `plugin_start`: when the plugin starts after a successful Whisker status read.
@@ -107,7 +108,8 @@ keys, user IDs, site IDs, serial numbers, device names, site names, addresses,
 MAC addresses, or raw Whisker API payloads.
 
 The Cloudflare Worker and D1 dashboard scaffold lives in `cloudflare/telemetry`.
-Deploy it first, then set `telemetryEndpointUrl` to the deployed `/events` URL.
+The default endpoint is
+`https://homebridge-whisker-ting-telemetry.rod-81a.workers.dev/events`.
 
 ## Project Files
 
@@ -136,6 +138,10 @@ npm pack --dry-run
 ```
 
 ## Release Notes
+
+### 1.0.6
+
+- Added the default Cloudflare telemetry endpoint.
 
 ### 1.0.5
 
@@ -186,8 +192,7 @@ npm pack --dry-run
 - Whisker can change or block the private API at any time.
 - MFA is not supported by this plugin.
 - Matter and websocket voltage streaming are intentionally not included.
-- Anonymous telemetry sends no events unless a telemetry endpoint URL is
-  configured.
+- Anonymous telemetry uses the configured Cloudflare endpoint.
 - Do not rely on HomeKit for life-safety alerting.
 
 ## Attribution
