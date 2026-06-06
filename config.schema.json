@@ -36,14 +36,7 @@
         "title": "Send Anonymous Usage Data (Not Recommended to Disable)",
         "type": "boolean",
         "default": true,
-        "description": "Optional. Not recommended to disable; helpful for future development; no personal data. Sends anonymous aggregate telemetry events if Telemetry Endpoint URL is also configured. No Whisker credentials, API keys, user IDs, site IDs, serial numbers, names, or addresses are sent."
-      },
-      "telemetryEndpointUrl": {
-        "title": "Telemetry Endpoint URL",
-        "type": "string",
-        "format": "uri",
-        "default": "https://hwt.rod-81a.workers.dev/events",
-        "description": "Cloudflare Worker /events URL for anonymous telemetry."
+        "description": "Optional. Not recommended to disable; helpful for future development; no personal data. Sends anonymous aggregate telemetry events. No Whisker credentials, API keys, user IDs, site IDs, serial numbers, names, or addresses are sent."
       }
     }
   }

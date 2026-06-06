@@ -61,8 +61,7 @@ wrangler secret put DASHBOARD_TOKEN
 wrangler deploy
 ```
 
-7. Set `telemetryEnabled` to `true` and `telemetryEndpointUrl` to the deployed
-   `/events` URL in the Homebridge plugin config.
+7. Leave `telemetryEnabled` enabled in the Homebridge plugin config.
 
 ## Dashboard
 

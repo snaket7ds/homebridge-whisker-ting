@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.9
+
+- Removed the telemetry endpoint URL from plugin settings and README examples.
+
 ## 1.0.8
 
 - Added HashGuard-style live-running telemetry dashboard behavior with
@@ -17,7 +21,7 @@
 
 - Added optional anonymous telemetry support with a Cloudflare Worker/D1
   dashboard scaffold.
-- Added `telemetryEnabled` and `telemetryEndpointUrl` configuration fields.
+- Added the `telemetryEnabled` configuration field.
 
 ## 1.0.4
 

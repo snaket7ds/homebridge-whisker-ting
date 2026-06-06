@@ -49,7 +49,6 @@ Hazard state is parsed from Whisker's EFH/UFH status levels. EFH entries marked
   "password": "YOUR_TING_PASSWORD",
   "pollInterval": 60,
   "telemetryEnabled": true,
-  "telemetryEndpointUrl": "https://hwt.rod-81a.workers.dev/events",
   "_bridge": {
     "name": "Ting Bridge",
     "username": "XX:XX:XX:XX:XX:XX",
@@ -71,10 +70,7 @@ Configuration fields:
   Ting status. The minimum is `30`; the default is `60`.
 - `telemetryEnabled`: Optional. Not recommended to disable; helpful for future
   development; no personal data. When `true`, the plugin sends anonymous
-  aggregate usage events if `telemetryEndpointUrl` is also set.
-- `telemetryEndpointUrl`: Cloudflare Worker `/events` URL for anonymous
-  telemetry. Defaults to
-  `https://hwt.rod-81a.workers.dev/events`.
+  aggregate usage events.
 - `_bridge`: Optional Homebridge child bridge settings. Running this plugin as
   a child bridge isolates it from other plugins and lets it restart separately.
 - `_bridge.name`: The child bridge name shown in Homebridge.
@@ -110,10 +106,8 @@ keys, user IDs, site IDs, serial numbers, device names, site names, addresses,
 MAC addresses, or raw Whisker API payloads.
 
 The Cloudflare Worker and D1 dashboard scaffold lives in `cloudflare/telemetry`.
-The default endpoint is
-`https://hwt.rod-81a.workers.dev/events`.
-The matching dashboard is available at `/dashboard` or `/` on the same Worker
-host when opened with the dashboard token.
+The matching dashboard is available at `/dashboard` or `/` on the Worker host
+when opened with the dashboard token.
 
 ## Project Files
 
@@ -143,6 +137,10 @@ npm pack --dry-run
 
 ## Release Notes
 
+### 1.0.9
+
+- Removed the telemetry endpoint URL from plugin settings and README examples.
+
 ### 1.0.8
 
 - Added HashGuard-style live-running telemetry dashboard behavior with
@@ -160,7 +158,7 @@ npm pack --dry-run
 
 - Added optional anonymous telemetry support with a Cloudflare Worker/D1
   dashboard scaffold.
-- Added `telemetryEnabled` and `telemetryEndpointUrl` configuration fields.
+- Added the `telemetryEnabled` configuration field.
 
 ### 1.0.4
 
