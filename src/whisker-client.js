@@ -230,15 +230,21 @@ function normalizeHazardStatus(status = {}) {
 }
 
 function isActiveElectricalFireHazard(status) {
-  if (status.status === 'ReviewedNotFire') {
-    return false;
-  }
+  // ReviewedNotFire is excluded even when level > 0
+  if (status.status === 'ReviewedNotFire') return false;
 
   return isActiveHazard(status);
 }
 
 function isActiveHazard(status) {
-  return Number.isFinite(status.level) && status.level > 0;
+  return isActiveStatus(status.status) && Number.isFinite(status.level) && status.level > 0;
+}
+
+function isActiveStatus(status) {
+  if (!status || status === 'none' || status === 'normal') {
+    return false;
+  }
+  return status !== 'ReviewedNotFire';
 }
 
 function getHazardStatus({
