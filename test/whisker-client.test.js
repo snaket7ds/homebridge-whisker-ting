@@ -74,6 +74,22 @@ assert.equal(reviewedStatus.electricalFireHazard, false);
 assert.equal(reviewedStatus.reviewedNotFire, true);
 assert.equal(reviewedStatus.hazardStatus, 'reviewed_not_fire');
 
+// ReviewedSuspicious with level > 0 should not trigger hazard
+const reviewedSuspiciousStatus = normalizeWhiskerStatus({
+  user_id: 123,
+  sites: [{ id: 456, displayName: 'Home' }],
+  devices: [{
+    serialNumber: 'TING123',
+    fireHazardStatus: {
+      efhStatus: { status: 'ReviewedSuspicious', level: 20 },
+      ufhStatus: { status: null, level: null },
+    },
+  }],
+});
+assert.equal(reviewedSuspiciousStatus.electricalFireHazard, false);
+assert.equal(reviewedSuspiciousStatus.reviewedNotFire, true);
+assert.equal(reviewedSuspiciousStatus.hazardStatus, 'reviewed_not_fire');
+
 // level > 0 with inactive status strings should not trigger hazard
 const normalLevelStatus = normalizeWhiskerStatus({
   user_id: 123,

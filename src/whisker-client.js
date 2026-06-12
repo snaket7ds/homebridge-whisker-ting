@@ -171,7 +171,7 @@ export function normalizeWhiskerStatus(data) {
   const electricalFireHazard = isActiveElectricalFireHazard(efhStatus);
   const utilityFireHazard = isActiveHazard(ufhStatus);
   const fireHazard = Boolean(device.isFire);
-  const reviewedNotFire = efhStatus.status === 'ReviewedNotFire';
+  const reviewedNotFire = efhStatus.status === 'ReviewedNotFire' || efhStatus.status === 'ReviewedSuspicious';
   const hazardStatus = getHazardStatus({
     fireHazard,
     electricalFireHazard,
@@ -244,7 +244,10 @@ function isActiveStatus(status) {
   if (!status || status === 'none' || status === 'normal') {
     return false;
   }
-  return status !== 'ReviewedNotFire';
+  if (status === 'ReviewedNotFire' || status === 'ReviewedSuspicious') {
+    return false;
+  }
+  return true;
 }
 
 function getHazardStatus({
@@ -260,7 +263,7 @@ function getHazardStatus({
   if (fireHazard || electricalFireHazard || utilityFireHazard) {
     return 'hazard_detected';
   }
-  if (efhStatus.status === 'ReviewedNotFire') {
+  if (efhStatus.status === 'ReviewedNotFire' || efhStatus.status === 'ReviewedSuspicious') {
     return 'reviewed_not_fire';
   }
   return 'no_hazards';
