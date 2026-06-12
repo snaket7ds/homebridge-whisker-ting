@@ -135,12 +135,6 @@ npm test
 npm pack --dry-run
 ```
 
-## Release Notes
-
-### 1.0.11
-
-- Optimizing code performance and fixing issues.
-
 ## Notes
 
 - This is not official Whisker Labs support.
