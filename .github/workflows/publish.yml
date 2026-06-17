@@ -47,6 +47,15 @@ jobs:
             exit 1
           fi
 
+      - name: Verify PLUGIN_VERSION matches package version
+        run: |
+          SETTINGS_VERSION="$(node -e "import('./src/settings.js').then(m => process.stdout.write(m.PLUGIN_VERSION))")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$SETTINGS_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "PLUGIN_VERSION ($SETTINGS_VERSION) does not match package.json version ($PACKAGE_VERSION)"
+            exit 1
+          fi
+
       - name: Create GitHub release notes
         run: |
           VERSION="${GITHUB_REF_NAME#v}"

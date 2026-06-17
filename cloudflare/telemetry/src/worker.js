@@ -108,9 +108,14 @@ async function buildSummary(env) {
     scalar(env, "SELECT COUNT(DISTINCT install_id) AS value FROM events WHERE event_type = 'plugin_start' AND received_at >= ?", since30Days),
     all(
       env,
-      `SELECT plugin_version, COUNT(DISTINCT install_id) AS installs
-       FROM events
-       WHERE event_type = 'plugin_install'
+      `SELECT plugin_version, COUNT(*) AS installs
+       FROM (
+         SELECT install_id, plugin_version,
+                ROW_NUMBER() OVER (PARTITION BY install_id ORDER BY received_at DESC) AS rn
+         FROM events
+         WHERE event_type IN ('plugin_install', 'plugin_start', 'plugin_ping')
+       )
+       WHERE rn = 1
        GROUP BY plugin_version
        ORDER BY installs DESC, plugin_version DESC`,
     ),
@@ -196,7 +201,7 @@ function renderDashboard() {
       <div class="card"><h2>Plugins Running 7d</h2><div class="metric" id="running7">-</div></div>
       <div class="card"><h2>Plugins Running 30d</h2><div class="metric" id="running30">-</div></div>
     </div>
-    <section><h2>Installed Versions</h2><table><thead><tr><th>Version</th><th>Unique Installs</th></tr></thead><tbody id="versions"></tbody></table></section>
+    <section><h2>Active Versions</h2><table><thead><tr><th>Version</th><th>Installs</th></tr></thead><tbody id="versions"></tbody></table></section>
     <section><h2>Platforms</h2><table><thead><tr><th>Platform</th><th>Unique Installs</th></tr></thead><tbody id="platforms"></tbody></table></section>
     <section><h2>Status Reports</h2><table><thead><tr><th>Status</th><th>Reports</th></tr></thead><tbody id="statusCounts"></tbody></table></section>
     <section><h2>Daily Running Plugins</h2><table><thead><tr><th>Day</th><th>Unique Plugins Running</th></tr></thead><tbody id="daily"></tbody></table></section>
