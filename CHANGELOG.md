@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.15
+
+- Normalize Ting Wi-Fi MAC addresses before storing them in Homebridge status data.
+
 ## 1.0.14
 
 - Fix telemetry always reporting plugin version 1.0.11 regardless of actual release version.

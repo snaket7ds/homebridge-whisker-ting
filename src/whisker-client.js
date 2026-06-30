@@ -191,8 +191,8 @@ export function normalizeWhiskerStatus(data) {
     serialNumber: device.serialNumber || String(device.id || site.id || 'unknown'),
     model: device.type || 'Ting',
     firmwareRevision: device.version,
-    wifiMacAddress: device.wifiMacAddress,
-    bluetoothMacAddress: device.bluetoothMacAddress,
+    wifiMacAddress: reverseMacAddress(device.wifiMacAddress ?? device.wifi_mac_address),
+    bluetoothMacAddress: device.bluetoothMacAddress ?? device.bluetooth_mac_address,
     socSerialNumber: device.socSerialNumber,
     groupName: device.group?.name,
     groupId: device.group?.id,
@@ -227,6 +227,24 @@ function normalizeHazardStatus(status = {}) {
     timestampUtc: status.timestampUtc || null,
     hexColor: status.hexColor || '#00FF00',
   };
+}
+
+function reverseMacAddress(address) {
+  if (typeof address !== 'string') {
+    return address ?? null;
+  }
+
+  const separator = address.includes(':') ? ':' : (address.includes('-') ? '-' : null);
+  if (!separator) {
+    return address;
+  }
+
+  const parts = address.split(separator);
+  if (parts.length !== 6 || parts.some((part) => part.length !== 2)) {
+    return address;
+  }
+
+  return parts.reverse().map((part) => part.toLowerCase()).join(separator);
 }
 
 function isActiveElectricalFireHazard(status) {

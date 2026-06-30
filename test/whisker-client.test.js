@@ -52,11 +52,24 @@ assert.equal(status.frozenPipe, true);
 assert.equal(status.owner, true);
 assert.equal(status.apiKeyUpdateAllowed, true);
 assert.equal(status.firmwareRevision, '1.2.3');
-assert.equal(status.wifiMacAddress, 'aa:bb:cc:dd:ee:ff');
+assert.equal(status.wifiMacAddress, 'ff:ee:dd:cc:bb:aa');
 assert.equal(status.bluetoothMacAddress, '11:22:33:44:55:66');
 assert.equal(status.socSerialNumber, 'SOC123');
 assert.equal(status.groupName, 'Panel');
 assert.equal(status.groupId, 789);
+
+const snakeCaseMacStatus = normalizeWhiskerStatus({
+  user_id: 123,
+  sites: [{ id: 456, displayName: 'Home' }],
+  devices: [{
+    serialNumber: 'TING123',
+    wifi_mac_address: 'aa-bb-cc-dd-ee-ff',
+    bluetooth_mac_address: '11-22-33-44-55-66',
+  }],
+});
+
+assert.equal(snakeCaseMacStatus.wifiMacAddress, 'ff-ee-dd-cc-bb-aa');
+assert.equal(snakeCaseMacStatus.bluetoothMacAddress, '11-22-33-44-55-66');
 
 const reviewedStatus = normalizeWhiskerStatus({
   user_id: 123,
