@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';import { credentialsStillValid } from '../src/whisker-client.js';
 import { WhiskerClient, normalizeWhiskerStatus } from '../src/whisker-client.js';
 
 const status = normalizeWhiskerStatus({
@@ -202,5 +202,70 @@ const authClient = new WhiskerClient({
 const authStatus = await authClient.getStatus();
 assert.equal(authStatus.userId, 'user-1');
 assert.equal(authStatus.fireHazard, true);
+
+// credentialsStillValid: missing fields
+assert.equal(credentialsStillValid(null), false);
+assert.equal(credentialsStillValid({}), false);
+
+// no expiry → valid (legacy / until 401)
+assert.equal(credentialsStillValid({
+  accessToken: 't',
+  apiKey: 'k',
+  userId: 'u',
+}), true);
+
+// not expired yet (with 60s skew)
+const now = 1_700_000_000_000;
+assert.equal(credentialsStillValid({
+  accessToken: 't',
+  apiKey: 'k',
+  userId: 'u',
+  expiresAt: now + 120_000,
+}, now, 60_000), true);
+
+// within skew window → refresh
+assert.equal(credentialsStillValid({
+  accessToken: 't',
+  apiKey: 'k',
+  userId: 'u',
+  expiresAt: now + 30_000,
+}, now, 60_000), false);
+
+// already expired
+assert.equal(credentialsStillValid({
+  accessToken: 't',
+  apiKey: 'k',
+  userId: 'u',
+  expiresAt: now - 1,
+}, now, 60_000), false);
+
+// getCredentials re-auths when expiry is near
+let authCalls = 0;
+const expiringClient = new WhiskerClient({
+  authProvider: {
+    async getCredentials() {
+      authCalls += 1;
+      return {
+        accessToken: `token-${authCalls}`,
+        apiKey: 'api-key',
+        userId: 'user-1',
+        expiresAt: Date.now() + (authCalls === 1 ? 10_000 : 3_600_000),
+      };
+    },
+  },
+  fetchImpl: async () => ({
+    ok: true,
+    json: async () => ({
+      user_id: 'user-1',
+      sites: [{ id: 'site-1', displayName: 'Home', isPowerQualityHazard: false }],
+      devices: [{ serialNumber: 'TING123', isFire: false }],
+    }),
+  }),
+});
+
+await expiringClient.getStatus();
+assert.equal(authCalls, 1);
+await expiringClient.getStatus();
+assert.equal(authCalls, 2, 'should re-auth when token is within refresh skew');
 
 console.log('whisker-client tests passed');

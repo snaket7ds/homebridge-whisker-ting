@@ -8,6 +8,8 @@ const HAP_POWER_QUALITY_SUBTYPE = 'power-quality-hazard';
 const HAP_UTILITY_FIRE_HAZARD_SUBTYPE = 'utility-fire-hazard';
 const HAP_LEARNING_MODE_SUBTYPE = 'learning-mode';
 const TELEMETRY_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+/** Mark HomeKit sensors offline after this many consecutive failed polls. */
+const OFFLINE_AFTER_FAILURES = 2;
 const SERVICE_NAMES = {
   electricalFireHazard: 'Ting Electrical Fire Alert',
   fireHazard: 'Ting Fire Alert',
@@ -37,6 +39,10 @@ export class WhiskerTingPlatform {
       log,
     });
     this.pollIntervalMs = Math.max(Number(this.config.pollInterval || 60), 30) * 1000;
+    this.pollInFlight = false;
+    this.consecutivePollFailures = 0;
+    this.apiOnline = true;
+    this.lastPollError = null;
 
     this.api.on('didFinishLaunching', () => {
       this.discoverAndStart().catch((error) => {
@@ -76,13 +82,14 @@ export class WhiskerTingPlatform {
     }
 
     this.configureServices(accessory, status);
+    this.markOnline();
     this.updateServices(accessory, status);
     this.recordTelemetryStatus(status);
     this.unregisterStaleAccessories(uuid);
 
     this.pollTimer = setInterval(() => {
       this.poll(accessory).catch((error) => {
-        this.log.warn('Failed to poll Ting status:', error.message);
+        this.handlePollFailure(accessory, error);
       });
     }, this.pollIntervalMs);
 
@@ -106,46 +113,129 @@ export class WhiskerTingPlatform {
     this.removeRenamedServices(accessory);
     this.removeUnusedServices(accessory);
 
-    this.getOrAddService(
+    const electrical = this.getOrAddService(
       accessory,
       this.Service.SmokeSensor,
       SERVICE_NAMES.electricalFireHazard,
       HAP_ELECTRICAL_FIRE_HAZARD_SUBTYPE,
-    )
+    );
+    electrical
       .getCharacteristic(this.Characteristic.SmokeDetected)
       .onGet(() => this.lastStatus?.electricalFireHazard
         ? this.Characteristic.SmokeDetected.SMOKE_DETECTED
         : this.Characteristic.SmokeDetected.SMOKE_NOT_DETECTED);
+    this.bindConnectivityGets(electrical);
 
-    this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.fireHazard, HAP_FIRE_HAZARD_SUBTYPE)
+    const fire = this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.fireHazard, HAP_FIRE_HAZARD_SUBTYPE);
+    fire
       .getCharacteristic(this.Characteristic.ContactSensorState)
       .onGet(() => this.lastStatus?.fireHazard
         ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
         : this.Characteristic.ContactSensorState.CONTACT_DETECTED);
+    this.bindConnectivityGets(fire);
 
-    this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.powerQualityHazard, HAP_POWER_QUALITY_SUBTYPE)
+    const powerQuality = this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.powerQualityHazard, HAP_POWER_QUALITY_SUBTYPE);
+    powerQuality
       .getCharacteristic(this.Characteristic.ContactSensorState)
       .onGet(() => this.lastStatus?.powerQualityHazard
         ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
         : this.Characteristic.ContactSensorState.CONTACT_DETECTED);
+    this.bindConnectivityGets(powerQuality);
 
-    this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.utilityFireHazard, HAP_UTILITY_FIRE_HAZARD_SUBTYPE)
+    const utility = this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.utilityFireHazard, HAP_UTILITY_FIRE_HAZARD_SUBTYPE);
+    utility
       .getCharacteristic(this.Characteristic.ContactSensorState)
       .onGet(() => this.lastStatus?.utilityFireHazard
         ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
         : this.Characteristic.ContactSensorState.CONTACT_DETECTED);
+    this.bindConnectivityGets(utility);
 
-    this.getOrAddService(accessory, this.Service.OccupancySensor, SERVICE_NAMES.learningMode, HAP_LEARNING_MODE_SUBTYPE)
+    const learning = this.getOrAddService(accessory, this.Service.OccupancySensor, SERVICE_NAMES.learningMode, HAP_LEARNING_MODE_SUBTYPE);
+    learning
       .getCharacteristic(this.Characteristic.OccupancyDetected)
       .onGet(() => this.lastStatus?.learningMode
         ? this.Characteristic.OccupancyDetected.OCCUPANCY_DETECTED
         : this.Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
+    this.bindConnectivityGets(learning);
   }
 
   async poll(accessory) {
-    const status = await this.client.getStatus();
-    this.updateServices(accessory, status);
-    this.recordTelemetryStatus(status);
+    if (this.pollInFlight) {
+      this.log.debug('Skipping Ting poll; previous poll still in flight');
+      return;
+    }
+
+    this.pollInFlight = true;
+    try {
+      const status = await this.client.getStatus();
+      this.markOnline();
+      this.updateServices(accessory, status);
+      this.recordTelemetryStatus(status);
+    } finally {
+      this.pollInFlight = false;
+    }
+  }
+
+  handlePollFailure(accessory, error) {
+    this.consecutivePollFailures += 1;
+    this.lastPollError = error?.message || String(error);
+    this.log.warn(
+      `Failed to poll Ting status (${this.consecutivePollFailures}): ${this.lastPollError}`,
+    );
+
+    if (this.consecutivePollFailures >= OFFLINE_AFTER_FAILURES) {
+      const wasOnline = this.apiOnline;
+      this.apiOnline = false;
+      if (wasOnline) {
+        this.log.warn('Ting API marked offline after consecutive poll failures');
+      }
+      this.updateConnectivity(accessory);
+    }
+  }
+
+  markOnline() {
+    if (!this.apiOnline || this.consecutivePollFailures > 0) {
+      if (!this.apiOnline) {
+        this.log.info('Ting API is online again');
+      }
+    }
+    this.apiOnline = true;
+    this.consecutivePollFailures = 0;
+    this.lastPollError = null;
+  }
+
+  bindConnectivityGets(service) {
+    // Ensure optional connectivity characteristics exist on hazard services.
+    if (this.Characteristic.StatusActive) {
+      service.getCharacteristic(this.Characteristic.StatusActive)
+        .onGet(() => this.apiOnline);
+    }
+    if (this.Characteristic.StatusFault) {
+      service.getCharacteristic(this.Characteristic.StatusFault)
+        .onGet(() => (this.apiOnline
+          ? this.Characteristic.StatusFault.NO_FAULT
+          : this.Characteristic.StatusFault.GENERAL_FAULT));
+    }
+  }
+
+  updateConnectivity(accessory) {
+    const active = this.apiOnline;
+    const fault = this.apiOnline
+      ? this.Characteristic.StatusFault.NO_FAULT
+      : this.Characteristic.StatusFault.GENERAL_FAULT;
+
+    const targetNames = new Set(Object.values(SERVICE_NAMES));
+    for (const service of accessory.services) {
+      if (!targetNames.has(service.displayName)) {
+        continue;
+      }
+      if (this.Characteristic.StatusActive) {
+        service.updateCharacteristic(this.Characteristic.StatusActive, active);
+      }
+      if (this.Characteristic.StatusFault) {
+        service.updateCharacteristic(this.Characteristic.StatusFault, fault);
+      }
+    }
   }
 
   updateServices(accessory, status) {
@@ -162,12 +252,6 @@ export class WhiskerTingPlatform {
         status.electricalFireHazard
           ? this.Characteristic.SmokeDetected.SMOKE_DETECTED
           : this.Characteristic.SmokeDetected.SMOKE_NOT_DETECTED,
-      )
-      .updateCharacteristic(
-        this.Characteristic.StatusFault,
-        status.electricalFireHazard
-          ? this.Characteristic.StatusFault.GENERAL_FAULT
-          : this.Characteristic.StatusFault.NO_FAULT,
       );
 
     this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.fireHazard, HAP_FIRE_HAZARD_SUBTYPE)
@@ -176,12 +260,6 @@ export class WhiskerTingPlatform {
         status.fireHazard
           ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
           : this.Characteristic.ContactSensorState.CONTACT_DETECTED,
-      )
-      .updateCharacteristic(
-        this.Characteristic.StatusFault,
-        status.fireHazard
-          ? this.Characteristic.StatusFault.GENERAL_FAULT
-          : this.Characteristic.StatusFault.NO_FAULT,
       );
 
     this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.powerQualityHazard, HAP_POWER_QUALITY_SUBTYPE)
@@ -190,12 +268,6 @@ export class WhiskerTingPlatform {
         status.powerQualityHazard
           ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
           : this.Characteristic.ContactSensorState.CONTACT_DETECTED,
-      )
-      .updateCharacteristic(
-        this.Characteristic.StatusFault,
-        status.powerQualityHazard
-          ? this.Characteristic.StatusFault.GENERAL_FAULT
-          : this.Characteristic.StatusFault.NO_FAULT,
       );
 
     this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.utilityFireHazard, HAP_UTILITY_FIRE_HAZARD_SUBTYPE)
@@ -204,12 +276,6 @@ export class WhiskerTingPlatform {
         status.utilityFireHazard
           ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
           : this.Characteristic.ContactSensorState.CONTACT_DETECTED,
-      )
-      .updateCharacteristic(
-        this.Characteristic.StatusFault,
-        status.utilityFireHazard
-          ? this.Characteristic.StatusFault.GENERAL_FAULT
-          : this.Characteristic.StatusFault.NO_FAULT,
       );
 
     this.getOrAddService(accessory, this.Service.OccupancySensor, SERVICE_NAMES.learningMode, HAP_LEARNING_MODE_SUBTYPE)
@@ -220,12 +286,15 @@ export class WhiskerTingPlatform {
           : this.Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED,
       );
 
+    // Connectivity: StatusActive / StatusFault reflect API reachability, not hazard.
+    this.updateConnectivity(accessory);
+
     this.log.debug(
       `Ting status: hazard=${status.hazardStatus}, fire=${status.fireHazard}, ` +
       `efh=${status.electricalFireHazard}/${status.efhStatus}/${status.efhLevel}, ` +
       `ufh=${status.utilityFireHazard}/${status.ufhStatus}/${status.ufhLevel}, ` +
       `powerQuality=${status.powerQualityHazard}, learning=${status.learningMode}, ` +
-      `reviewedNotFire=${status.reviewedNotFire}`,
+      `reviewedNotFire=${status.reviewedNotFire}, online=${this.apiOnline}`,
     );
   }
 

@@ -133,6 +133,11 @@ when opened with the dashboard token.
 npm run lint
 npm test
 npm pack --dry-run
+
+## Releasing
+
+Updates must be published to **GitHub and npm** (Homebridge installs from npm).  
+See [RELEASE.md](./RELEASE.md). Short path: bump `package.json` + `CHANGELOG.md`, push `main`, then push tag `vX.Y.Z` to run CI publish.
 ```
 
 ## Notes

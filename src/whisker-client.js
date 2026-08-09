@@ -48,12 +48,31 @@ export class CognitoAuthProvider {
       throw new Error('Whisker login did not return user ID and API key attributes');
     }
 
+    const accessToken = session.getAccessToken();
+    // getExpiration() is seconds since epoch (Cognito JWT).
+    const expiresAt = Number(accessToken.getExpiration?.() || 0) * 1000;
+
     return {
-      accessToken: session.getAccessToken().getJwtToken(),
+      accessToken: accessToken.getJwtToken(),
+      expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : null,
       userId,
       apiKey,
     };
   }
+}
+
+/** True if cached credentials can still be used (with a refresh skew). */
+export function credentialsStillValid(credentials, now = Date.now(), skewMs = 60_000) {
+  if (!credentials?.accessToken || !credentials?.apiKey || !credentials?.userId) {
+    return false;
+  }
+
+  // Legacy / test credentials without expiry stay until a 401 clears them.
+  if (!credentials.expiresAt) {
+    return true;
+  }
+
+  return now < credentials.expiresAt - skewMs;
 }
 
 export class WhiskerClient {
@@ -100,9 +119,11 @@ export class WhiskerClient {
   }
 
   async getCredentials() {
-    if (this.credentials) {
+    if (credentialsStillValid(this.credentials)) {
       return this.credentials;
     }
+
+    this.credentials = null;
 
     if (!this.authProvider) {
       throw new Error('Missing Whisker username or password');
