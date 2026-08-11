@@ -94,7 +94,7 @@ Cloudflare Worker endpoint:
 
 - `plugin_install`: once per random install ID.
 - `plugin_start`: when the plugin starts after a successful Whisker status read.
-- `plugin_ping`: every five minutes while the plugin is running, used for the
+- `plugin_ping`: every fifteen minutes while the plugin is running, used for the
   live-running dashboard count.
 - `status_update`: when coarse Ting status changes, or at most once per day when
   status is unchanged.

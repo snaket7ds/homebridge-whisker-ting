@@ -77,6 +77,13 @@ try {
   assert.equal(requests.length, 5);
   assert.equal(requests[4].body.eventType, 'plugin_ping');
 
+  // Heartbeat dedupe within 14 minutes
+  await client.recordHeartbeat();
+  assert.equal(requests.length, 5, 'rapid second ping should be suppressed');
+  currentTime = new Date('2026-01-02T01:20:00.000Z');
+  await client.recordHeartbeat();
+  assert.equal(requests.length, 6, 'ping after min interval should send');
+
   const disabledClient = new TelemetryClient({
     enabled: false,
     endpointUrl: 'https://telemetry.example/events',

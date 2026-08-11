@@ -5,6 +5,8 @@ import os from 'node:os';
 
 const DEFAULT_STATE_FILE = 'whisker-ting-telemetry.json';
 const DEFAULT_TIMEOUT_MS = 5000;
+/** Client-side minimum gap between plugin_ping writes (aligns with 15m platform timer). */
+export const PING_MIN_INTERVAL_MS = 14 * 60 * 1000;
 export const DEFAULT_TELEMETRY_ENDPOINT_URL = 'https://hwt.rod-81a.workers.dev/events';
 
 export class TelemetryClient {
@@ -96,7 +98,26 @@ export class TelemetryClient {
   }
 
   async recordHeartbeat() {
-    return this.sendEvent('plugin_ping');
+    if (!this.canSend()) {
+      return false;
+    }
+
+    const state = await this.loadState();
+    const now = this.now();
+    if (state.lastPingSentAt) {
+      const ageMs = now.getTime() - Date.parse(state.lastPingSentAt);
+      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < PING_MIN_INTERVAL_MS) {
+        return false;
+      }
+    }
+
+    if (await this.sendEvent('plugin_ping')) {
+      state.lastPingSentAt = now.toISOString();
+      await this.saveState(state);
+      return true;
+    }
+
+    return false;
   }
 
   async sendEvent(eventType, data = {}) {

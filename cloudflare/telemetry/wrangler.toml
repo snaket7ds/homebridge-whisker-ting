@@ -2,6 +2,10 @@ name = "hwt"
 main = "src/worker.js"
 compatibility_date = "2026-01-01"
 
+# Purge plugin_ping rows older than 30 days (see purgeOldPings in worker.js).
+[triggers]
+crons = ["0 */6 * * *"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "whisker_ting_telemetry"

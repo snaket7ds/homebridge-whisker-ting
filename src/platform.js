@@ -7,7 +7,8 @@ const HAP_FIRE_HAZARD_SUBTYPE = 'fire-hazard';
 const HAP_POWER_QUALITY_SUBTYPE = 'power-quality-hazard';
 const HAP_UTILITY_FIRE_HAZARD_SUBTYPE = 'utility-fire-hazard';
 const HAP_LEARNING_MODE_SUBTYPE = 'learning-mode';
-const TELEMETRY_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+/** Heartbeat every 15 minutes (was 5) to cut D1 write volume. */
+const TELEMETRY_HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 /** Mark HomeKit sensors offline after this many consecutive failed polls. */
 const OFFLINE_AFTER_FAILURES = 2;
 const SERVICE_NAMES = {
@@ -26,16 +27,19 @@ export class WhiskerTingPlatform {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
     this.accessories = new Map();
+    const storagePath = api.user?.storagePath?.() || '';
     this.client = new WhiskerClient({
       username: this.config.username,
       password: this.config.password,
+      storagePath,
+      log,
     });
     this.telemetry = new TelemetryClient({
       enabled: this.config.telemetryEnabled,
       endpointUrl: this.config.telemetryEndpointUrl,
       pluginVersion: PLUGIN_VERSION,
       homebridgeVersion: api.serverVersion,
-      storagePath: api.user?.storagePath?.(),
+      storagePath,
       log,
     });
     this.pollIntervalMs = Math.max(Number(this.config.pollInterval || 60), 30) * 1000;
@@ -64,7 +68,36 @@ export class WhiskerTingPlatform {
     this.accessories.set(accessory.UUID, accessory);
   }
 
+  /**
+   * Fail fast with a clear message when required config is missing.
+   * @returns {string|null} Error message, or null when config looks usable.
+   */
+  validateConfig() {
+    const username = typeof this.config.username === 'string' ? this.config.username.trim() : '';
+    const password = typeof this.config.password === 'string' ? this.config.password : '';
+
+    if (!username && !password) {
+      return 'Whisker email and password are required. Open Homebridge settings for Homebridge Whisker Ting and enter your Ting app credentials.';
+    }
+    if (!username) {
+      return 'Whisker email is required. Open Homebridge settings for Homebridge Whisker Ting and enter the email used in the Ting app.';
+    }
+    if (!password) {
+      return 'Whisker password is required. Open Homebridge settings for Homebridge Whisker Ting and enter the password used in the Ting app.';
+    }
+    if (!username.includes('@')) {
+      return 'Whisker email looks invalid. Use the email address for your Ting app account.';
+    }
+    return null;
+  }
+
   async discoverAndStart() {
+    const configError = this.validateConfig();
+    if (configError) {
+      this.log.error(configError);
+      throw new Error(configError);
+    }
+
     const status = await this.client.getStatus();
     await this.telemetry.initialize().catch((error) => {
       this.log.debug('Failed to initialize anonymous Ting telemetry:', error.message);

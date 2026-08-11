@@ -1,5 +1,13 @@
-import assert from 'node:assert/strict';import { credentialsStillValid } from '../src/whisker-client.js';
-import { WhiskerClient, normalizeWhiskerStatus } from '../src/whisker-client.js';
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import os from 'node:os';
+import {
+  CredentialStore,
+  credentialsStillValid,
+  WhiskerClient,
+  normalizeWhiskerStatus,
+} from '../src/whisker-client.js';
 
 const status = normalizeWhiskerStatus({
   user_id: 123,
@@ -267,5 +275,90 @@ await expiringClient.getStatus();
 assert.equal(authCalls, 1);
 await expiringClient.getStatus();
 assert.equal(authCalls, 2, 'should re-auth when token is within refresh skew');
+
+// CredentialStore persists and clears on disk
+const authDir = await mkdtemp(join(os.tmpdir(), 'whisker-ting-auth-'));
+try {
+  const store = new CredentialStore(authDir);
+  await store.save({
+    username: 'user@example.com',
+    accessToken: 'access',
+    refreshToken: 'refresh',
+    expiresAt: Date.now() + 3_600_000,
+    userId: 'u1',
+    apiKey: 'k1',
+  });
+  const loaded = await store.load();
+  assert.equal(loaded.username, 'user@example.com');
+  assert.equal(loaded.refreshToken, 'refresh');
+  assert.equal(loaded.userId, 'u1');
+  const raw = await readFile(join(authDir, 'whisker-ting-auth.json'), 'utf8');
+  assert.match(raw, /refreshToken/);
+  await store.clear();
+  assert.equal(await store.load(), null);
+} finally {
+  await rm(authDir, { recursive: true, force: true });
+}
+
+// WhiskerClient reuses stored credentials without calling authProvider
+const persistDir = await mkdtemp(join(os.tmpdir(), 'whisker-ting-auth-persist-'));
+try {
+  let providerCalls = 0;
+  const client = new WhiskerClient({
+    username: 'user@example.com',
+    password: 'secret',
+    storagePath: persistDir,
+    authProvider: {
+      async getCredentials() {
+        providerCalls += 1;
+        return {
+          accessToken: 'disk-token',
+          refreshToken: 'disk-refresh',
+          apiKey: 'api-key',
+          userId: 'user-1',
+          expiresAt: Date.now() + 3_600_000,
+        };
+      },
+      async refreshCredentials() {
+        throw new Error('should not refresh in this test');
+      },
+    },
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        user_id: 'user-1',
+        sites: [{ id: 'site-1', displayName: 'Home', isPowerQualityHazard: false }],
+        devices: [{ serialNumber: 'TING123', isFire: false }],
+      }),
+    }),
+  });
+
+  await client.getStatus();
+  assert.equal(providerCalls, 1);
+  // New client instance with same store should not re-login
+  const client2 = new WhiskerClient({
+    username: 'user@example.com',
+    password: 'secret',
+    storagePath: persistDir,
+    authProvider: {
+      async getCredentials() {
+        providerCalls += 1;
+        throw new Error('should use disk credentials');
+      },
+    },
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        user_id: 'user-1',
+        sites: [{ id: 'site-1', displayName: 'Home', isPowerQualityHazard: false }],
+        devices: [{ serialNumber: 'TING123', isFire: false }],
+      }),
+    }),
+  });
+  await client2.getStatus();
+  assert.equal(providerCalls, 1, 'second client should load credentials from disk');
+} finally {
+  await rm(persistDir, { recursive: true, force: true });
+}
 
 console.log('whisker-client tests passed');

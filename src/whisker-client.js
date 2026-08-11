@@ -1,14 +1,20 @@
+import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import AmazonCognitoIdentity from 'amazon-cognito-identity-js';
 
 const {
   AuthenticationDetails,
   CognitoUser,
   CognitoUserPool,
+  CognitoRefreshToken,
 } = AmazonCognitoIdentity;
 
 const DEFAULT_API_BASE = 'https://api.wskr.io/api/v1';
 const COGNITO_USER_POOL_ID = 'us-east-1_trW4gH661';
 const COGNITO_CLIENT_ID = '4akjeqt9gtl8rgg1cksunipk9u';
+const AUTH_STATE_FILE = 'whisker-ting-auth.json';
+/** Refresh access token this long before JWT expiry. */
+export const CREDENTIAL_REFRESH_SKEW_MS = 60_000;
 
 export class CognitoAuthProvider {
   constructor({
@@ -48,21 +54,33 @@ export class CognitoAuthProvider {
       throw new Error('Whisker login did not return user ID and API key attributes');
     }
 
-    const accessToken = session.getAccessToken();
-    // getExpiration() is seconds since epoch (Cognito JWT).
-    const expiresAt = Number(accessToken.getExpiration?.() || 0) * 1000;
+    return credentialsFromSession(session, { userId, apiKey });
+  }
 
-    return {
-      accessToken: accessToken.getJwtToken(),
-      expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : null,
-      userId,
-      apiKey,
-    };
+  /**
+   * Refresh access token using a stored Cognito refresh token.
+   * Keeps cached userId/apiKey from the previous login.
+   */
+  async refreshCredentials(cached) {
+    if (!this.username || !cached?.refreshToken || !cached?.userId || !cached?.apiKey) {
+      throw new Error('Cannot refresh Whisker credentials without a stored refresh token');
+    }
+
+    const cognitoUser = new CognitoUser({
+      Username: this.username,
+      Pool: this.userPool,
+    });
+    const refreshToken = new CognitoRefreshToken({ RefreshToken: cached.refreshToken });
+    const session = await refreshSession(cognitoUser, refreshToken);
+    return credentialsFromSession(session, {
+      userId: cached.userId,
+      apiKey: cached.apiKey,
+    });
   }
 }
 
 /** True if cached credentials can still be used (with a refresh skew). */
-export function credentialsStillValid(credentials, now = Date.now(), skewMs = 60_000) {
+export function credentialsStillValid(credentials, now = Date.now(), skewMs = CREDENTIAL_REFRESH_SKEW_MS) {
   if (!credentials?.accessToken || !credentials?.apiKey || !credentials?.userId) {
     return false;
   }
@@ -75,6 +93,67 @@ export function credentialsStillValid(credentials, now = Date.now(), skewMs = 60
   return now < credentials.expiresAt - skewMs;
 }
 
+/**
+ * Disk-backed Cognito credential cache (access + refresh tokens, api key, user id).
+ * Scoped to the Whisker username so password/account switches do not reuse tokens.
+ */
+export class CredentialStore {
+  constructor(storagePath, { filename = AUTH_STATE_FILE } = {}) {
+    this.storagePath = storagePath || '';
+    this.filename = filename;
+  }
+
+  get path() {
+    return join(this.storagePath || process.cwd(), this.filename);
+  }
+
+  async load() {
+    if (!this.storagePath) {
+      return null;
+    }
+
+    try {
+      const raw = JSON.parse(await readFile(this.path, 'utf8'));
+      if (!raw || typeof raw !== 'object') {
+        return null;
+      }
+      return raw;
+    } catch {
+      return null;
+    }
+  }
+
+  async save(credentials) {
+    if (!this.storagePath || !credentials) {
+      return;
+    }
+
+    await mkdir(this.storagePath, { recursive: true });
+    const payload = {
+      username: credentials.username || '',
+      accessToken: credentials.accessToken || '',
+      refreshToken: credentials.refreshToken || '',
+      expiresAt: credentials.expiresAt ?? null,
+      userId: credentials.userId || '',
+      apiKey: credentials.apiKey || '',
+      savedAt: new Date().toISOString(),
+    };
+    await writeFile(this.path, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  }
+
+  async clear() {
+    if (!this.storagePath) {
+      return;
+    }
+
+    try {
+      await unlink(this.path);
+    } catch {
+      // ignore missing file
+    }
+  }
+}
+
 export class WhiskerClient {
   constructor({
     username,
@@ -82,14 +161,20 @@ export class WhiskerClient {
     apiBase = DEFAULT_API_BASE,
     fetchImpl = fetch,
     authProvider,
-  }) {
-    this.username = username;
-    this.password = password;
+    storagePath = '',
+    credentialStore,
+    log,
+  } = {}) {
+    this.username = typeof username === 'string' ? username.trim() : '';
+    this.password = typeof password === 'string' ? password : '';
     this.apiBase = apiBase.replace(/\/$/, '');
     this.fetchImpl = fetchImpl;
-    this.authProvider = authProvider || (username || password
-      ? new CognitoAuthProvider({ username, password })
+    this.log = log;
+    this.authProvider = authProvider || (this.username || this.password
+      ? new CognitoAuthProvider({ username: this.username, password: this.password })
       : null);
+    this.credentialStore = credentialStore
+      ?? (storagePath ? new CredentialStore(storagePath) : null);
     this.credentials = null;
   }
 
@@ -106,7 +191,7 @@ export class WhiskerClient {
     });
 
     if (response.status === 401 && this.authProvider && !hasRetried) {
-      this.credentials = null;
+      await this.clearCredentials();
       return this.fetchStatus(true);
     }
 
@@ -123,6 +208,27 @@ export class WhiskerClient {
       return this.credentials;
     }
 
+    // Try persisted session before a full password login.
+    const cached = await this.loadStoredCredentials();
+    if (credentialsStillValid(cached)) {
+      this.credentials = cached;
+      this.log?.debug?.('Using stored Whisker credentials');
+      return this.credentials;
+    }
+
+    if (cached?.refreshToken && this.authProvider?.refreshCredentials) {
+      try {
+        this.credentials = await this.authProvider.refreshCredentials(cached);
+        this.credentials.username = this.username;
+        await this.persistCredentials(this.credentials);
+        this.log?.debug?.('Refreshed Whisker access token from stored refresh token');
+        return this.credentials;
+      } catch (error) {
+        this.log?.debug?.(`Whisker token refresh failed, logging in again: ${error.message}`);
+        await this.credentialStore?.clear();
+      }
+    }
+
     this.credentials = null;
 
     if (!this.authProvider) {
@@ -130,8 +236,62 @@ export class WhiskerClient {
     }
 
     this.credentials = await this.authProvider.getCredentials();
+    this.credentials.username = this.username;
+    await this.persistCredentials(this.credentials);
     return this.credentials;
   }
+
+  async loadStoredCredentials() {
+    if (!this.credentialStore || !this.username) {
+      return null;
+    }
+
+    const cached = await this.credentialStore.load();
+    if (!cached || cached.username !== this.username) {
+      return null;
+    }
+
+    return cached;
+  }
+
+  async persistCredentials(credentials) {
+    if (!this.credentialStore || !credentials) {
+      return;
+    }
+
+    try {
+      await this.credentialStore.save({
+        ...credentials,
+        username: this.username,
+      });
+    } catch (error) {
+      this.log?.debug?.(`Could not persist Whisker credentials: ${error.message}`);
+    }
+  }
+
+  async clearCredentials() {
+    this.credentials = null;
+    try {
+      await this.credentialStore?.clear();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function credentialsFromSession(session, { userId, apiKey }) {
+  const accessToken = session.getAccessToken();
+  // getExpiration() is seconds since epoch (Cognito JWT).
+  const expiresAt = Number(accessToken.getExpiration?.() || 0) * 1000;
+  const refreshToken = session.getRefreshToken?.()?.getToken?.() || '';
+
+  return {
+    accessToken: accessToken.getJwtToken(),
+    refreshToken: refreshToken || '',
+    expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : null,
+    userId,
+    apiKey,
+  };
 }
 
 function authenticateUser(cognitoUser, authDetails) {
@@ -142,6 +302,18 @@ function authenticateUser(cognitoUser, authDetails) {
       newPasswordRequired: () => reject(new Error('Whisker account requires a new password before Homebridge can log in')),
       mfaRequired: () => reject(new Error('Whisker account requires MFA, which this plugin does not support')),
       totpRequired: () => reject(new Error('Whisker account requires TOTP MFA, which this plugin does not support')),
+    });
+  });
+}
+
+function refreshSession(cognitoUser, refreshToken) {
+  return new Promise((resolve, reject) => {
+    cognitoUser.refreshSession(refreshToken, (error, session) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(session);
     });
   });
 }

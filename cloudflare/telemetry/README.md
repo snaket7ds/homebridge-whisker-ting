@@ -22,8 +22,8 @@ The dashboard uses these events:
 - `plugin_install`: sent once per anonymous install ID.
 - `plugin_start`: sent when the plugin starts after a successful Whisker status
   read.
-- `plugin_ping`: sent every five minutes while the plugin is running; used for
-  the live-running dashboard count.
+- `plugin_ping`: sent every fifteen minutes while the plugin is running; used for
+  the live-running dashboard count. Server-side dedupe and 30-day retention apply.
 - `status_update`: sent when the coarse Ting status changes, or at most once per
   day when status is unchanged.
 
