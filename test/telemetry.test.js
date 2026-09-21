@@ -58,6 +58,7 @@ try {
     ufhLevel: 0,
   });
   assert.equal(requests.length, 3);
+  assert.equal(requests[2].body.data.learning_mode, false);
 
   currentTime = new Date('2026-01-02T01:00:00.000Z');
   await client.recordStatus({
@@ -83,6 +84,52 @@ try {
   currentTime = new Date('2026-01-02T01:20:00.000Z');
   await client.recordHeartbeat();
   assert.equal(requests.length, 6, 'ping after min interval should send');
+
+  // Per-device slot dedupe: two devices reporting the same state must both send.
+  const flatStatus = {
+    hazardStatus: 'no_hazards',
+    fireHazard: false,
+    electricalFireHazard: false,
+    utilityFireHazard: false,
+    powerQualityHazard: false,
+    learningMode: false,
+    efhLevel: 0,
+    ufhLevel: 0,
+  };
+  currentTime = new Date('2026-01-02T02:00:00.000Z');
+  await client.recordStatus(flatStatus, { deviceSlot: 0 });
+  assert.equal(requests.length, 7, 'first status for device slot 0 should send');
+  await client.recordStatus(flatStatus, { deviceSlot: 1 });
+  assert.equal(requests.length, 8, 'identical state from a second device slot must not be suppressed');
+  assert.equal(requests[6].body.data.hazard_status, 'no_hazards');
+  assert.equal(
+    JSON.stringify(requests[7].body).includes('deviceSlot'),
+    false,
+    'the device slot is a local dedupe key and must not be sent',
+  );
+
+  // Same slot, unchanged state, inside the 24h window -> suppressed.
+  await client.recordStatus(flatStatus, { deviceSlot: 1 });
+  assert.equal(requests.length, 8, 'unchanged state for the same slot within 24h should be suppressed');
+  await client.recordStatus(flatStatus, { deviceSlot: 0 });
+  assert.equal(requests.length, 8, 'slot 0 must dedupe independently of slot 1');
+
+  // Same slot, changed state -> sends even though the other slot is unchanged.
+  await client.recordStatus(
+    { ...flatStatus, hazardStatus: 'hazard_detected', electricalFireHazard: true, efhLevel: 20 },
+    { deviceSlot: 1 },
+  );
+  assert.equal(requests.length, 9, 'changed state for the same slot should send');
+  assert.equal(requests[8].body.data.electrical_fire_hazard, true);
+  assert.equal(requests[8].body.data.efh_level, 20);
+
+  // Unchanged state past the 24h window -> re-sends as a daily liveness report.
+  currentTime = new Date('2026-01-03T03:30:00.000Z');
+  await client.recordStatus(
+    { ...flatStatus, hazardStatus: 'hazard_detected', electricalFireHazard: true, efhLevel: 20 },
+    { deviceSlot: 1 },
+  );
+  assert.equal(requests.length, 10, 'unchanged status should re-send after 24h');
 
   const disabledClient = new TelemetryClient({
     enabled: false,

@@ -1,10 +1,10 @@
 const ALLOWED_EVENTS = new Set(['plugin_install', 'plugin_start', 'plugin_ping', 'status_update']);
-const PRESENCE_EVENTS = "('plugin_start', 'plugin_ping')";
-const VALID_INSTALL = `install_id != 'probe' AND length(install_id) >= 8`;
-// Server-side ping floor (plugin targets 15m; this blocks bursts/old clients).
-const PING_MIN_INTERVAL_MS = 10 * 60 * 1000;
 // Drop high-volume heartbeats older than this (keep install/start/status longer).
 const PING_RETENTION_DAYS = 30;
+// Serve cached /api/summary responses so dashboard auto-refresh / tab-focus
+// reloads don't rescan D1 on every request. 120s keeps "Online Now" fresh
+// (heartbeats arrive every 15 min anyway).
+const SUMMARY_CACHE_TTL_SECONDS = 120;
 
 export default {
   async fetch(request, env) {
@@ -19,9 +19,18 @@ export default {
         return json({ error: 'unauthorized' }, 401);
       }
 
-      return json(await buildSummary(env), 200, {
-        'cache-control': 'private, max-age=30',
+      // Serve summary from the edge cache when possible so the dashboard's
+      // auto-refresh and tab-focus reloads don't re-scan D1 every time.
+      const cached = await readCachedSummary(request);
+      if (cached) {
+        return cached;
+      }
+
+      const response = json(await buildSummary(env), 200, {
+        'cache-control': `private, max-age=${SUMMARY_CACHE_TTL_SECONDS}`,
       });
+      await writeCachedSummary(request, response);
+      return response;
     }
 
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/dashboard')) {
@@ -72,63 +81,131 @@ async function recordEvent(request, env) {
     return json({ error: 'invalid_event' }, 400);
   }
 
-  if (eventType === 'plugin_ping') {
-    const recent = await env.DB.prepare(
-      `SELECT received_at AS value
-       FROM events
-       WHERE install_id = ? AND event_type = 'plugin_ping'
-       ORDER BY received_at DESC
-       LIMIT 1`,
-    )
-      .bind(installId)
-      .first();
-    if (recent?.value) {
-      const ageMs = Date.now() - Date.parse(recent.value);
-      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < PING_MIN_INTERVAL_MS) {
-        return json({ ok: true, deduped: true });
-      }
-    }
+  // Rollup-on-write (2026-09): heartbeats no longer append rows to `events`.
+  // Each event upserts one row in `installs` (per install, with current version
+  // info and counters) and one tiny row in `presence_days` (per install per UTC
+  // day). `status_update` also updates the latest-status snapshot on the install
+  // row and rolls into `status_days`. Dashboard summaries then read a few
+  // hundred rows instead of the whole heartbeat log, keeping D1 free-tier usage
+  // flat regardless of ping volume.
+  const nowIso = new Date().toISOString();
+  const day = nowIso.slice(0, 10);
+  const stmts = [];
+
+  if (eventType === 'plugin_install') {
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO installs (install_id, first_seen, last_seen, last_start, plugin_version, node_version, platform, arch, homebridge_version, starts, pings, status_updates)
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, 0, 0, 0)
+         ON CONFLICT(install_id) DO UPDATE SET
+           last_seen = excluded.last_seen,
+           plugin_version = excluded.plugin_version,
+           node_version = excluded.node_version,
+           platform = excluded.platform,
+           arch = excluded.arch,
+           homebridge_version = excluded.homebridge_version`
+      ).bind(installId, nowIso, nowIso, pluginVersion, nodeVersion, platform, arch, homebridgeVersion)
+    );
+  } else if (eventType === 'plugin_start') {
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO installs (install_id, first_seen, last_seen, last_start, plugin_version, node_version, platform, arch, homebridge_version, starts, pings, status_updates)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0)
+         ON CONFLICT(install_id) DO UPDATE SET
+           last_seen = excluded.last_seen,
+           last_start = excluded.last_start,
+           plugin_version = excluded.plugin_version,
+           node_version = excluded.node_version,
+           platform = excluded.platform,
+           arch = excluded.arch,
+           homebridge_version = excluded.homebridge_version,
+           starts = starts + 1`
+      ).bind(installId, nowIso, nowIso, nowIso, pluginVersion, nodeVersion, platform, arch, homebridgeVersion)
+    );
+  } else if (eventType === 'plugin_ping') {
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO installs (install_id, first_seen, last_seen, last_start, plugin_version, node_version, platform, arch, homebridge_version, starts, pings, status_updates)
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, 0, 1, 0)
+         ON CONFLICT(install_id) DO UPDATE SET
+           last_seen = excluded.last_seen,
+           plugin_version = excluded.plugin_version,
+           node_version = excluded.node_version,
+           platform = excluded.platform,
+           arch = excluded.arch,
+           homebridge_version = excluded.homebridge_version,
+           pings = pings + 1`
+      ).bind(installId, nowIso, nowIso, pluginVersion, nodeVersion, platform, arch, homebridgeVersion)
+    );
+  } else if (eventType === 'status_update') {
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO installs (install_id, first_seen, last_seen, last_start, plugin_version, node_version, platform, arch, homebridge_version, starts, pings, status_updates, hazard_status, fire_hazard, electrical_fire_hazard, utility_fire_hazard, power_quality_hazard, learning_mode, efh_level, ufh_level, last_status_at)
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(install_id) DO UPDATE SET
+           last_seen = excluded.last_seen,
+           plugin_version = excluded.plugin_version,
+           node_version = excluded.node_version,
+           platform = excluded.platform,
+           arch = excluded.arch,
+           homebridge_version = excluded.homebridge_version,
+           status_updates = status_updates + 1,
+           hazard_status = excluded.hazard_status,
+           fire_hazard = excluded.fire_hazard,
+           electrical_fire_hazard = excluded.electrical_fire_hazard,
+           utility_fire_hazard = excluded.utility_fire_hazard,
+           power_quality_hazard = excluded.power_quality_hazard,
+           learning_mode = excluded.learning_mode,
+           efh_level = excluded.efh_level,
+           ufh_level = excluded.ufh_level,
+           last_status_at = excluded.last_status_at`
+      ).bind(
+        installId, nowIso, nowIso, pluginVersion, nodeVersion, platform, arch, homebridgeVersion,
+        stringValue(data.hazard_status, 64),
+        booleanValue(data.fire_hazard),
+        booleanValue(data.electrical_fire_hazard),
+        booleanValue(data.utility_fire_hazard),
+        booleanValue(data.power_quality_hazard),
+        booleanValue(data.learning_mode),
+        nullableNumberValue(data.efh_level),
+        nullableNumberValue(data.ufh_level),
+        nowIso
+      ),
+      env.DB.prepare(
+        `INSERT INTO status_days (install_id, day, hazard_status, fire_hazard, electrical_fire_hazard, utility_fire_hazard, power_quality_hazard, learning_mode, efh_level, ufh_level, reports)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+         ON CONFLICT(install_id, day, hazard_status) DO UPDATE SET
+           fire_hazard = fire_hazard + excluded.fire_hazard,
+           electrical_fire_hazard = electrical_fire_hazard + excluded.electrical_fire_hazard,
+           utility_fire_hazard = utility_fire_hazard + excluded.utility_fire_hazard,
+           power_quality_hazard = power_quality_hazard + excluded.power_quality_hazard,
+           learning_mode = learning_mode + excluded.learning_mode,
+           efh_level = excluded.efh_level,
+           ufh_level = excluded.ufh_level,
+           reports = reports + 1`
+      ).bind(
+        installId,
+        day,
+        stringValue(data.hazard_status, 64),
+        booleanValue(data.fire_hazard),
+        booleanValue(data.electrical_fire_hazard),
+        booleanValue(data.utility_fire_hazard),
+        booleanValue(data.power_quality_hazard),
+        booleanValue(data.learning_mode),
+        nullableNumberValue(data.efh_level),
+        nullableNumberValue(data.ufh_level)
+      )
+    );
   }
 
-  await env.DB.prepare(
-    `INSERT INTO events (
-      received_at,
-      event_type,
-      install_id,
-      plugin_version,
-      node_version,
-      platform,
-      arch,
-      homebridge_version,
-      hazard_status,
-      fire_hazard,
-      electrical_fire_hazard,
-      utility_fire_hazard,
-      power_quality_hazard,
-      learning_mode,
-      efh_level,
-      ufh_level
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(
-      new Date().toISOString(),
-      eventType,
-      installId,
-      pluginVersion,
-      nodeVersion,
-      platform,
-      arch,
-      homebridgeVersion,
-      stringValue(data.hazard_status, 64),
-      booleanValue(data.fire_hazard),
-      booleanValue(data.electrical_fire_hazard),
-      booleanValue(data.utility_fire_hazard),
-      booleanValue(data.power_quality_hazard),
-      booleanValue(data.learning_mode),
-      nullableNumberValue(data.efh_level),
-      nullableNumberValue(data.ufh_level),
-    )
-    .run();
+  // One tiny row per install per UTC day proves it ran that day (daily chart).
+  stmts.push(
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO presence_days (install_id, day) VALUES (?, ?)`
+    ).bind(installId, day)
+  );
+
+  await env.DB.batch(stmts);
 
   // Opportunistic cleanup so retention runs even without waiting for cron.
   if (eventType === 'plugin_ping' && Math.random() < 0.02) {
@@ -174,6 +251,8 @@ async function buildSummary(env) {
   const rosterRetentionDays = 7;
   const sinceRoster = isoHoursAgo(24 * rosterRetentionDays);
 
+  const since30DaysDay = since30Days.slice(0, 10); // date-only compare for day columns
+
   const [
     totalInstalls,
     liveRunning,
@@ -195,48 +274,43 @@ async function buildSummary(env) {
     daily,
     installRoster,
   ] = await Promise.all([
-    distinctPresence(env, sinceRoster),
-    distinctPresence(env, sinceLive),
-    distinctPresence(env, since1Day),
-    distinctPresence(env, since7Days),
-    distinctPresence(env, since30Days),
-    distinctLaunches(env, since1Day),
-    distinctLaunches(env, since7Days),
-    distinctLaunches(env, since30Days),
-    latestFieldCounts(env, 'plugin_version', since30Days),
-    latestFieldCounts(env, 'platform', since30Days),
-    latestFieldCounts(env, 'arch', since30Days),
-    latestFieldCounts(env, 'node_version', since30Days),
-    latestFieldCounts(env, 'homebridge_version', since30Days),
+    countInstallsSeen(env, sinceRoster),
+    countInstallsSeen(env, sinceLive),
+    countInstallsSeen(env, since1Day),
+    countInstallsSeen(env, since7Days),
+    countInstallsSeen(env, since30Days),
+    countLaunches(env, since1Day),
+    countLaunches(env, since7Days),
+    countLaunches(env, since30Days),
+    countField(env, 'plugin_version', since30Days),
+    countField(env, 'platform', since30Days),
+    countField(env, 'arch', since30Days),
+    countField(env, 'node_version', since30Days),
+    countField(env, 'homebridge_version', since30Days),
     all(
       env,
-      `SELECT hazard_status, COUNT(*) AS reports
-       FROM events
-       WHERE event_type = 'status_update'
-         AND hazard_status <> ''
-         AND received_at >= ?
-         AND ${VALID_INSTALL}
+      `SELECT hazard_status, SUM(reports) AS reports
+       FROM status_days
+       WHERE day >= ? AND hazard_status <> ''
        GROUP BY hazard_status
        ORDER BY reports DESC, hazard_status ASC`,
-      since30Days,
+      since30DaysDay,
     ),
-    // Aggregate flag hits from status updates in last 30 days
+    // Aggregate flag hits from status updates in last 30 days (weighted by reports)
     first(
       env,
       `SELECT
-         COALESCE(SUM(CASE WHEN fire_hazard = 1 THEN 1 ELSE 0 END), 0) AS fire_hazard,
-         COALESCE(SUM(CASE WHEN electrical_fire_hazard = 1 THEN 1 ELSE 0 END), 0) AS electrical_fire_hazard,
-         COALESCE(SUM(CASE WHEN utility_fire_hazard = 1 THEN 1 ELSE 0 END), 0) AS utility_fire_hazard,
-         COALESCE(SUM(CASE WHEN power_quality_hazard = 1 THEN 1 ELSE 0 END), 0) AS power_quality_hazard,
-         COALESCE(SUM(CASE WHEN learning_mode = 1 THEN 1 ELSE 0 END), 0) AS learning_mode,
-         COUNT(*) AS status_reports
-       FROM events
-       WHERE event_type = 'status_update'
-         AND received_at >= ?
-         AND ${VALID_INSTALL}`,
-      since30Days,
+         COALESCE(SUM(fire_hazard * reports), 0) AS fire_hazard,
+         COALESCE(SUM(electrical_fire_hazard * reports), 0) AS electrical_fire_hazard,
+         COALESCE(SUM(utility_fire_hazard * reports), 0) AS utility_fire_hazard,
+         COALESCE(SUM(power_quality_hazard * reports), 0) AS power_quality_hazard,
+         COALESCE(SUM(learning_mode * reports), 0) AS learning_mode,
+         COALESCE(SUM(reports), 0) AS status_reports
+       FROM status_days
+       WHERE day >= ?`,
+      since30DaysDay,
     ),
-    // Latest status snapshot per install (only installs active in 30d)
+    // Latest status snapshot per install (stored on the installs row by ingest)
     first(
       env,
       `SELECT
@@ -249,16 +323,8 @@ async function buildSummary(env) {
          COALESCE(SUM(CASE WHEN utility_fire_hazard = 1 THEN 1 ELSE 0 END), 0) AS installs_ufh,
          COALESCE(SUM(CASE WHEN power_quality_hazard = 1 THEN 1 ELSE 0 END), 0) AS installs_pq,
          COUNT(*) AS installs_with_status
-       FROM (
-         SELECT install_id, hazard_status, fire_hazard, electrical_fire_hazard,
-                utility_fire_hazard, power_quality_hazard, learning_mode,
-                ROW_NUMBER() OVER (PARTITION BY install_id ORDER BY received_at DESC) AS rn
-         FROM events
-         WHERE event_type = 'status_update'
-           AND received_at >= ?
-           AND ${VALID_INSTALL}
-       )
-       WHERE rn = 1`,
+       FROM installs
+       WHERE last_seen >= ? AND hazard_status != ''`,
       since30Days,
     ),
     first(
@@ -270,66 +336,48 @@ async function buildSummary(env) {
          COUNT(CASE WHEN ufh_level IS NOT NULL THEN 1 END) AS ufh_samples,
          ROUND(AVG(CASE WHEN ufh_level IS NOT NULL THEN ufh_level END), 1) AS ufh_avg,
          MAX(ufh_level) AS ufh_max
-       FROM events
-       WHERE event_type = 'status_update'
-         AND received_at >= ?
-         AND ${VALID_INSTALL}`,
-      since30Days,
+       FROM status_days
+       WHERE day >= ?`,
+      since30DaysDay,
     ),
     all(
       env,
-      `SELECT substr(received_at, 1, 10) AS day, COUNT(DISTINCT install_id) AS running_plugins
-       FROM events
-       WHERE event_type IN ${PRESENCE_EVENTS}
-         AND received_at >= ?
-         AND ${VALID_INSTALL}
+      `SELECT day, COUNT(*) AS running_plugins
+       FROM presence_days
+       WHERE day >= ?
        GROUP BY day
        ORDER BY day ASC`,
-      since30Days,
+      since30DaysDay,
     ),
     all(
       env,
       `SELECT
          substr(install_id, 1, 8) AS install_short,
-         MAX(plugin_version) AS plugin_version,
-         MAX(platform) AS platform,
-         MAX(arch) AS arch,
-         MAX(node_version) AS node_version,
-         MAX(homebridge_version) AS homebridge_version,
-         MIN(received_at) AS first_seen,
-         MAX(received_at) AS last_seen,
-         SUM(CASE WHEN event_type = 'plugin_start' THEN 1 ELSE 0 END) AS starts,
-         SUM(CASE WHEN event_type = 'plugin_ping' THEN 1 ELSE 0 END) AS pings,
-         SUM(CASE WHEN event_type = 'status_update' THEN 1 ELSE 0 END) AS status_updates
-       FROM events
-       WHERE ${VALID_INSTALL}
-       GROUP BY install_id
-       HAVING MAX(received_at) >= ?
+         plugin_version,
+         platform,
+         arch,
+         node_version,
+         homebridge_version,
+         first_seen,
+         last_seen,
+         starts,
+         pings,
+         status_updates,
+         hazard_status,
+         fire_hazard,
+         electrical_fire_hazard,
+         utility_fire_hazard,
+         power_quality_hazard,
+         learning_mode,
+         efh_level,
+         ufh_level
+       FROM installs
+       WHERE last_seen >= ?
        ORDER BY last_seen DESC
        LIMIT 50`,
       sinceRoster,
     ),
   ]);
-
-  // Latest status snapshot per install (short id for roster join).
-  const latestStatusFull = await all(
-    env,
-    `SELECT
-       substr(install_id, 1, 8) AS install_short,
-       hazard_status, fire_hazard, electrical_fire_hazard,
-       utility_fire_hazard, power_quality_hazard, learning_mode,
-       efh_level, ufh_level
-     FROM (
-       SELECT install_id, hazard_status, fire_hazard, electrical_fire_hazard,
-              utility_fire_hazard, power_quality_hazard, learning_mode,
-              efh_level, ufh_level,
-              ROW_NUMBER() OVER (PARTITION BY install_id ORDER BY received_at DESC) AS rn
-       FROM events
-       WHERE event_type = 'status_update' AND ${VALID_INSTALL}
-     )
-     WHERE rn = 1`,
-  );
-  const statusByShort = new Map(latestStatusFull.map((r) => [r.install_short, r]));
 
   const now = Date.now();
   const maxRosterAgeMin = rosterRetentionDays * 24 * 60;
@@ -340,19 +388,10 @@ async function buildSummary(env) {
       let status = 'idle';
       if (ageMin != null && ageMin <= 10) status = 'online';
       else if (ageMin != null && ageMin <= 60 * 24) status = 'recent';
-      const hazard = statusByShort.get(row.install_short) || {};
       return {
         ...row,
         status,
         age_minutes: ageMin == null ? null : Math.round(ageMin),
-        hazard_status: hazard.hazard_status || '',
-        fire_hazard: hazard.fire_hazard || 0,
-        electrical_fire_hazard: hazard.electrical_fire_hazard || 0,
-        utility_fire_hazard: hazard.utility_fire_hazard || 0,
-        power_quality_hazard: hazard.power_quality_hazard || 0,
-        learning_mode: hazard.learning_mode || 0,
-        efh_level: hazard.efh_level,
-        ufh_level: hazard.ufh_level,
       };
     })
     .filter((row) => row.age_minutes == null || row.age_minutes <= maxRosterAgeMin);
@@ -408,47 +447,31 @@ async function buildSummary(env) {
   };
 }
 
-function latestFieldCounts(env, field, since) {
+function countField(env, field, since) {
   // field is a trusted identifier from our code only
   return all(
     env,
     `SELECT ${field} AS value, COUNT(*) AS installs
-     FROM (
-       SELECT install_id, ${field},
-              ROW_NUMBER() OVER (PARTITION BY install_id ORDER BY received_at DESC) AS rn
-       FROM events
-       WHERE event_type IN ('plugin_install', 'plugin_start', 'plugin_ping', 'status_update')
-         AND received_at >= ?
-         AND ${VALID_INSTALL}
-         AND ${field} != ''
-     )
-     WHERE rn = 1
+     FROM installs
+     WHERE last_seen >= ? AND ${field} != ''
      GROUP BY ${field}
      ORDER BY installs DESC, value ASC`,
     since,
   );
 }
 
-function distinctPresence(env, since) {
+function countInstallsSeen(env, since) {
   return scalar(
     env,
-    `SELECT COUNT(DISTINCT install_id) AS value
-     FROM events
-     WHERE event_type IN ${PRESENCE_EVENTS}
-       AND received_at >= ?
-       AND ${VALID_INSTALL}`,
+    `SELECT COUNT(*) AS value FROM installs WHERE last_seen >= ?`,
     since,
   );
 }
 
-function distinctLaunches(env, since) {
+function countLaunches(env, since) {
   return scalar(
     env,
-    `SELECT COUNT(DISTINCT install_id) AS value
-     FROM events
-     WHERE event_type = 'plugin_start'
-       AND received_at >= ?
-       AND ${VALID_INSTALL}`,
+    `SELECT COUNT(*) AS value FROM installs WHERE last_start IS NOT NULL AND last_start >= ?`,
     since,
   );
 }
@@ -685,7 +708,7 @@ function renderDashboard() {
       </div>
       <div class="meta">
         <div id="generated">loading&hellip;</div>
-        <div style="margin-top:4px">auto-refresh <strong>60s</strong></div>
+        <div style="margin-top:4px">auto-refresh <strong>5 min</strong></div>
       </div>
     </div>
   </header>
@@ -1097,13 +1120,49 @@ function renderDashboard() {
     }
 
     load();
-    setInterval(load, 60000);
+    setInterval(load, 300000);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") load();
     });
   </script>
 </body>
 </html>`;
+}
+
+// Cache API helpers for /api/summary. The dashboard polls every few minutes and
+// reloads on tab focus, so serving a cached JSON blob keeps those refreshes off D1.
+// The cache key includes the ?token= URL, so only the authorized dashboard hits it.
+async function readCachedSummary(request) {
+  try {
+    const cache = caches.default;
+    const key = new Request(request.url, { method: 'GET' });
+    const hit = await cache.match(key);
+    if (hit) {
+      const headers = new Headers(hit.headers);
+      headers.set('content-type', 'application/json; charset=utf-8');
+      headers.set('cache-control', 'no-store'); // never let browsers cache the token URL
+      return new Response(hit.body, { status: hit.status, statusText: hit.statusText, headers });
+    }
+  } catch {
+    // Cache unavailable — fall through and compute fresh.
+  }
+  return null;
+}
+
+async function writeCachedSummary(request, response) {
+  try {
+    const cache = caches.default;
+    const key = new Request(request.url, { method: 'GET' });
+    const copy = response.clone();
+    const headers = new Headers(copy.headers);
+    // Cloudflare's cache won't store `private` responses. The dashboard fetches
+    // with cache: "no-store" (and the URL carries the token), so making the edge
+    // copy public is safe — only someone with the token URL can request it.
+    headers.set('cache-control', `public, max-age=${SUMMARY_CACHE_TTL_SECONDS}`);
+    await cache.put(key, new Response(copy.body, { status: copy.status, statusText: copy.statusText, headers }));
+  } catch {
+    // Best-effort caching only; a failed put just means the next call recomputes.
+  }
 }
 
 function isAuthorized(request, env, url) {

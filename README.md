@@ -13,6 +13,8 @@ set of HomeKit services.
 - Shows electrical fire hazard state as a HomeKit smoke sensor.
 - Shows Ting fire, utility fire, and power quality flags as HomeKit sensors.
 - Shows Ting learning/calibration mode as an occupancy-style status sensor.
+- Supports all Ting devices returned by the account, with one HomeKit accessory per device.
+- Retries startup and polling failures with bounded backoff, jitter, and request timeouts.
 - Ignores EFH events marked `ReviewedNotFire` so reviewed non-fire events do not
   stay active in HomeKit.
 - Optionally sends anonymous aggregate telemetry to a Cloudflare Worker you
@@ -48,6 +50,8 @@ Hazard state is parsed from Whisker's EFH/UFH status levels. EFH entries marked
   "username": "YOUR_TING_EMAIL",
   "password": "YOUR_TING_PASSWORD",
   "pollInterval": 60,
+  "requestTimeoutSeconds": 20,
+  "authTimeoutSeconds": 20,
   "telemetryEnabled": true,
   "_bridge": {
     "name": "Ting Bridge",
@@ -67,7 +71,11 @@ Configuration fields:
 - `password`: The password used to sign in to the Ting app. Homebridge stores
   this in its config, so protect access to your Homebridge instance.
 - `pollInterval`: How often, in seconds, the plugin checks Whisker for updated
-  Ting status. The minimum is `30`; the default is `60`.
+  Ting status. The minimum is `30`, the maximum is `3600`, and the default is `60`.
+- `requestTimeoutSeconds`: Maximum time to wait for a Whisker API request. The
+  range is `5`–`120` seconds and the default is `20`.
+- `authTimeoutSeconds`: Maximum time to wait for Cognito login or token refresh.
+  The range is `5`–`120` seconds and the default is `20`.
 - `telemetryEnabled`: Optional. Not recommended to disable; helpful for future
   development; no personal data. When `true`, the plugin sends anonymous
   aggregate usage events.
@@ -133,15 +141,20 @@ when opened with the dashboard token.
 npm run lint
 npm test
 npm pack --dry-run
+```
 
 ## Releasing
 
 Updates must be published to **GitHub and npm** (Homebridge installs from npm).  
 See [RELEASE.md](./RELEASE.md). Short path: bump `package.json` + `CHANGELOG.md`, push `main`, then push tag `vX.Y.Z` to run CI publish.
-```
 
 ## Notes
 
+- Multiple devices are represented as separate accessories and use the Ting
+  serial number for stable accessory identity. A device missing from a
+  successful API response is retained in the Homebridge cache and marked
+  offline rather than being automatically unregistered.
+- Polling retries are jittered and use bounded exponential backoff after errors.
 - This is not official Whisker Labs support.
 - Whisker can change or block the private API at any time.
 - MFA is not supported by this plugin.

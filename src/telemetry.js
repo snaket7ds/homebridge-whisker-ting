@@ -31,37 +31,47 @@ export class TelemetryClient {
     this.timeoutMs = timeoutMs;
     this.log = log;
     this.state = null;
+    this.operationPromise = Promise.resolve();
   }
 
   async initialize() {
-    if (!this.canSend()) {
-      return;
-    }
+    return this.enqueueOperation(async () => {
+      if (!this.canSend()) {
+        return;
+      }
 
-    const state = await this.loadState();
-    if (!state.installId) {
-      state.installId = randomUUID().replaceAll('-', '');
-      await this.saveState(state);
-    }
-
-    if (!state.installReported) {
-      if (await this.sendEvent('plugin_install')) {
-        state.installReported = true;
+      const state = await this.loadState();
+      if (!state.installId) {
+        state.installId = randomUUID().replaceAll('-', '');
         await this.saveState(state);
       }
-    }
 
-    await this.sendEvent('plugin_start');
+      if (!state.installReported) {
+        if (await this.sendEvent('plugin_install')) {
+          state.installReported = true;
+          await this.saveState(state);
+        }
+      }
+
+      await this.sendEvent('plugin_start');
+    });
   }
 
-  async recordStatus(status) {
+  async recordStatus(status, { deviceSlot = null } = {}) {
+    return this.enqueueOperation(() => this.recordStatusInternal(status, { deviceSlot }));
+  }
+
+  async recordStatusInternal(status, { deviceSlot = null } = {}) {
     if (!this.canSend()) {
       return false;
     }
 
     const state = await this.loadState();
     const now = this.now();
+    // Include a stable, anonymous device slot so identical states from two
+    // devices do not suppress one another in the shared install state.
     const statusKey = [
+      deviceSlot ?? 'account',
       status.hazardStatus,
       status.fireHazard,
       status.electricalFireHazard,
@@ -70,10 +80,12 @@ export class TelemetryClient {
       status.learningMode,
     ].join('|');
 
+    const statusSlot = String(deviceSlot ?? 'account');
+    const statusState = state.lastStatusByDeviceSlot?.[statusSlot];
     if (
-      state.lastStatusKey === statusKey
-      && state.lastStatusSentAt
-      && now.getTime() - Date.parse(state.lastStatusSentAt) < 24 * 60 * 60 * 1000
+      statusState?.statusKey === statusKey
+      && statusState.sentAt
+      && now.getTime() - Date.parse(statusState.sentAt) < 24 * 60 * 60 * 1000
     ) {
       return false;
     }
@@ -88,8 +100,13 @@ export class TelemetryClient {
       efh_level: nonNegativeIntegerOrNull(status.efhLevel),
       ufh_level: nonNegativeIntegerOrNull(status.ufhLevel),
     })) {
-      state.lastStatusKey = statusKey;
-      state.lastStatusSentAt = now.toISOString();
+      state.lastStatusByDeviceSlot = {
+        ...(state.lastStatusByDeviceSlot || {}),
+        [statusSlot]: {
+          statusKey,
+          sentAt: now.toISOString(),
+        },
+      };
       await this.saveState(state);
       return true;
     }
@@ -98,26 +115,34 @@ export class TelemetryClient {
   }
 
   async recordHeartbeat() {
-    if (!this.canSend()) {
-      return false;
-    }
-
-    const state = await this.loadState();
-    const now = this.now();
-    if (state.lastPingSentAt) {
-      const ageMs = now.getTime() - Date.parse(state.lastPingSentAt);
-      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < PING_MIN_INTERVAL_MS) {
+    return this.enqueueOperation(async () => {
+      if (!this.canSend()) {
         return false;
       }
-    }
 
-    if (await this.sendEvent('plugin_ping')) {
-      state.lastPingSentAt = now.toISOString();
-      await this.saveState(state);
-      return true;
-    }
+      const state = await this.loadState();
+      const now = this.now();
+      if (state.lastPingSentAt) {
+        const ageMs = now.getTime() - Date.parse(state.lastPingSentAt);
+        if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < PING_MIN_INTERVAL_MS) {
+          return false;
+        }
+      }
 
-    return false;
+      if (await this.sendEvent('plugin_ping')) {
+        state.lastPingSentAt = now.toISOString();
+        await this.saveState(state);
+        return true;
+      }
+
+      return false;
+    });
+  }
+
+  enqueueOperation(operation) {
+    const result = this.operationPromise.then(operation, operation);
+    this.operationPromise = result.catch(() => {});
+    return result;
   }
 
   async sendEvent(eventType, data = {}) {

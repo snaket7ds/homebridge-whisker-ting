@@ -30,7 +30,22 @@
         "title": "Poll Interval Seconds",
         "type": "integer",
         "default": 60,
-        "minimum": 30
+        "minimum": 30,
+        "maximum": 3600
+      },
+      "requestTimeoutSeconds": {
+        "title": "API Request Timeout Seconds",
+        "type": "integer",
+        "default": 20,
+        "minimum": 5,
+        "maximum": 120
+      },
+      "authTimeoutSeconds": {
+        "title": "Authentication Timeout Seconds",
+        "type": "integer",
+        "default": 20,
+        "minimum": 5,
+        "maximum": 120
       },
       "telemetryEnabled": {
         "title": "Send Anonymous Usage Data (Not Recommended to Disable)",

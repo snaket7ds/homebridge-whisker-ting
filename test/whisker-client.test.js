@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import os from 'node:os';
 import {
@@ -7,6 +7,7 @@ import {
   credentialsStillValid,
   WhiskerClient,
   normalizeWhiskerStatus,
+  normalizeWhiskerStatuses,
 } from '../src/whisker-client.js';
 
 const status = normalizeWhiskerStatus({
@@ -61,10 +62,28 @@ assert.equal(status.owner, true);
 assert.equal(status.apiKeyUpdateAllowed, true);
 assert.equal(status.firmwareRevision, '1.2.3');
 assert.equal(status.wifiMacAddress, 'ff:ee:dd:cc:bb:aa');
-assert.equal(status.bluetoothMacAddress, '11:22:33:44:55:66');
+assert.equal(status.bluetoothMacAddress, '66:55:44:33:22:11');
 assert.equal(status.socSerialNumber, 'SOC123');
 assert.equal(status.groupName, 'Panel');
 assert.equal(status.groupId, 789);
+
+// All devices are normalized, and each device uses its own site when the API supplies siteId.
+const multiDeviceStatuses = normalizeWhiskerStatuses({
+  user_id: 123,
+  sites: [
+    { id: 456, displayName: 'Home' },
+    { id: 999, displayName: 'Garage' },
+  ],
+  devices: [
+    { serialNumber: 'TING123', siteId: 456 },
+    { serialNumber: 'TING999', siteId: 999 },
+  ],
+});
+assert.equal(multiDeviceStatuses.length, 2);
+assert.equal(multiDeviceStatuses[0].serialNumber, 'TING123');
+assert.equal(multiDeviceStatuses[0].siteName, 'Home');
+assert.equal(multiDeviceStatuses[1].serialNumber, 'TING999');
+assert.equal(multiDeviceStatuses[1].siteName, 'Garage');
 
 const snakeCaseMacStatus = normalizeWhiskerStatus({
   user_id: 123,
@@ -77,7 +96,7 @@ const snakeCaseMacStatus = normalizeWhiskerStatus({
 });
 
 assert.equal(snakeCaseMacStatus.wifiMacAddress, 'ff-ee-dd-cc-bb-aa');
-assert.equal(snakeCaseMacStatus.bluetoothMacAddress, '11-22-33-44-55-66');
+assert.equal(snakeCaseMacStatus.bluetoothMacAddress, '66-55-44-33-22-11');
 
 const reviewedStatus = normalizeWhiskerStatus({
   user_id: 123,
@@ -210,6 +229,66 @@ const authClient = new WhiskerClient({
 const authStatus = await authClient.getStatus();
 assert.equal(authStatus.userId, 'user-1');
 assert.equal(authStatus.fireHazard, true);
+assert.equal(authStatus.serialNumber, 'TING123');
+
+// Concurrent credential requests share one authentication operation.
+let concurrentAuthCalls = 0;
+const concurrentAuthClient = new WhiskerClient({
+  authProvider: {
+    async getCredentials() {
+      concurrentAuthCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { accessToken: 'access-token', apiKey: 'api-key', userId: 'user-1' };
+    },
+  },
+  fetchImpl: async () => ({
+    ok: true,
+    json: async () => ({
+      user_id: 'user-1',
+      sites: [{ id: 'site-1', displayName: 'Home' }],
+      devices: [{ serialNumber: 'TING123', isFire: false }],
+    }),
+  }),
+});
+await Promise.all([concurrentAuthClient.getStatus(), concurrentAuthClient.getStatus()]);
+assert.equal(concurrentAuthCalls, 1);
+
+// Requests abort with a bounded timeout instead of remaining in flight forever.
+const timeoutClient = new WhiskerClient({
+  requestTimeoutMs: 1_000,
+  authTimeoutMs: 1_000,
+  authProvider: {
+    async getCredentials() {
+      return { accessToken: 'access-token', apiKey: 'api-key', userId: 'user-1' };
+    },
+  },
+  fetchImpl: async (url, options) => new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => {
+      const error = new Error('aborted');
+      error.name = 'AbortError';
+      reject(error);
+    });
+  }),
+});
+await assert.rejects(
+  timeoutClient.getStatus(),
+  /Whisker API request timed out after 1s/,
+);
+
+// Authentication also has a bounded timeout.
+const authTimeoutClient = new WhiskerClient({
+  authTimeoutMs: 1_000,
+  authProvider: {
+    async getCredentials() {
+      return new Promise(() => {});
+    },
+  },
+  fetchImpl: async () => ({ ok: true, json: async () => ({}) }),
+});
+await assert.rejects(
+  authTimeoutClient.getStatus(),
+  /Whisker authentication timed out after 1s/,
+);
 
 // credentialsStillValid: missing fields
 assert.equal(credentialsStillValid(null), false);
@@ -294,6 +373,8 @@ try {
   assert.equal(loaded.userId, 'u1');
   const raw = await readFile(join(authDir, 'whisker-ting-auth.json'), 'utf8');
   assert.match(raw, /refreshToken/);
+  assert.equal((await stat(join(authDir, 'whisker-ting-auth.json'))).mode & 0o777, 0o600);
+
   await store.clear();
   assert.equal(await store.load(), null);
 } finally {

@@ -2,3 +2,5 @@ node_modules/
 npm-debug.log*
 .DS_Store
 
+# Local wrangler state (miniflare D1/cache) — never commit
+.wrangler/

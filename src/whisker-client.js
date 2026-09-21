@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import AmazonCognitoIdentity from 'amazon-cognito-identity-js';
 
@@ -13,6 +13,8 @@ const DEFAULT_API_BASE = 'https://api.wskr.io/api/v1';
 const COGNITO_USER_POOL_ID = 'us-east-1_trW4gH661';
 const COGNITO_CLIENT_ID = '4akjeqt9gtl8rgg1cksunipk9u';
 const AUTH_STATE_FILE = 'whisker-ting-auth.json';
+export const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
+export const DEFAULT_AUTH_TIMEOUT_MS = 20_000;
 /** Refresh access token this long before JWT expiry. */
 export const CREDENTIAL_REFRESH_SKEW_MS = 60_000;
 
@@ -138,7 +140,10 @@ export class CredentialStore {
       apiKey: credentials.apiKey || '',
       savedAt: new Date().toISOString(),
     };
-    await writeFile(this.path, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    const temporaryPath = `${this.path}.tmp-${process.pid}`;
+    await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    await chmod(temporaryPath, 0o600);
+    await rename(temporaryPath, this.path);
   }
 
   async clear() {
@@ -162,6 +167,8 @@ export class WhiskerClient {
     fetchImpl = fetch,
     authProvider,
     storagePath = '',
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    authTimeoutMs = DEFAULT_AUTH_TIMEOUT_MS,
     credentialStore,
     log,
   } = {}) {
@@ -169,6 +176,8 @@ export class WhiskerClient {
     this.password = typeof password === 'string' ? password : '';
     this.apiBase = apiBase.replace(/\/$/, '');
     this.fetchImpl = fetchImpl;
+    this.requestTimeoutMs = Math.max(Number(requestTimeoutMs) || DEFAULT_REQUEST_TIMEOUT_MS, 1_000);
+    this.authTimeoutMs = Math.max(Number(authTimeoutMs) || DEFAULT_AUTH_TIMEOUT_MS, 1_000);
     this.log = log;
     this.authProvider = authProvider || (this.username || this.password
       ? new CognitoAuthProvider({ username: this.username, password: this.password })
@@ -176,23 +185,37 @@ export class WhiskerClient {
     this.credentialStore = credentialStore
       ?? (storagePath ? new CredentialStore(storagePath) : null);
     this.credentials = null;
+    this.credentialsPromise = null;
   }
 
   async getStatus() {
-    return this.fetchStatus();
+    const statuses = await this.getStatuses();
+    if (!statuses[0]) {
+      throw new Error('Whisker API response did not include any devices');
+    }
+    return statuses[0];
+  }
+
+  async getStatuses() {
+    return this.fetchStatuses();
   }
 
   async fetchStatus(hasRetried = false) {
+    const statuses = await this.fetchStatuses(hasRetried);
+    return statuses[0];
+  }
+
+  async fetchStatuses(hasRetried = false) {
     const credentials = await this.getCredentials();
 
-    const response = await this.fetchImpl(`${this.apiBase}/Users/${encodeURIComponent(credentials.userId)}`, {
+    const response = await this.fetchImplWithTimeout(`${this.apiBase}/Users/${encodeURIComponent(credentials.userId)}`, {
       method: 'GET',
       headers: buildWhiskerHeaders(credentials),
     });
 
     if (response.status === 401 && this.authProvider && !hasRetried) {
       await this.clearCredentials();
-      return this.fetchStatus(true);
+      return this.fetchStatuses(true);
     }
 
     if (!response.ok) {
@@ -200,14 +223,39 @@ export class WhiskerClient {
     }
 
     const data = await response.json();
-    return normalizeWhiskerStatus(data);
+    return normalizeWhiskerStatuses(data);
+  }
+
+  async fetchImplWithTimeout(url, options) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    try {
+      return await this.fetchImpl(url, { ...options, signal: controller.signal });
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error(`Whisker API request timed out after ${this.requestTimeoutMs / 1000}s`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async getCredentials() {
     if (credentialsStillValid(this.credentials)) {
       return this.credentials;
     }
+    if (!this.credentialsPromise) {
+      this.credentialsPromise = this.resolveCredentials();
+    }
+    try {
+      return await this.credentialsPromise;
+    } finally {
+      this.credentialsPromise = null;
+    }
+  }
 
+  async resolveCredentials() {
     // Try persisted session before a full password login.
     const cached = await this.loadStoredCredentials();
     if (credentialsStillValid(cached)) {
@@ -218,7 +266,11 @@ export class WhiskerClient {
 
     if (cached?.refreshToken && this.authProvider?.refreshCredentials) {
       try {
-        this.credentials = await this.authProvider.refreshCredentials(cached);
+        this.credentials = await promiseWithTimeout(
+          this.authProvider.refreshCredentials(cached),
+          this.authTimeoutMs,
+          'Whisker token refresh',
+        );
         this.credentials.username = this.username;
         await this.persistCredentials(this.credentials);
         this.log?.debug?.('Refreshed Whisker access token from stored refresh token');
@@ -235,7 +287,11 @@ export class WhiskerClient {
       throw new Error('Missing Whisker username or password');
     }
 
-    this.credentials = await this.authProvider.getCredentials();
+    this.credentials = await promiseWithTimeout(
+      this.authProvider.getCredentials(),
+      this.authTimeoutMs,
+      'Whisker authentication',
+    );
     this.credentials.username = this.username;
     await this.persistCredentials(this.credentials);
     return this.credentials;
@@ -277,6 +333,17 @@ export class WhiskerClient {
       // ignore
     }
   }
+}
+
+function promiseWithTimeout(promise, timeoutMs, operation) {
+  let timeout;
+  const timeoutPromise = new Promise((resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`${operation} timed out after ${timeoutMs / 1000}s`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout));
 }
 
 function credentialsFromSession(session, { userId, apiKey }) {
@@ -346,9 +413,28 @@ function buildWhiskerHeaders(credentials) {
   return headers;
 }
 
+export function normalizeWhiskerStatuses(data) {
+  const sites = Array.isArray(data?.sites) ? data.sites : [];
+  const devices = Array.isArray(data?.devices) ? data.devices : [];
+
+  if (!sites.length) {
+    throw new Error('Whisker API response did not include a site');
+  }
+  if (!devices.length) {
+    throw new Error('Whisker API response did not include a device');
+  }
+
+  return devices.map((device) => normalizeWhiskerStatus({
+    ...data,
+    devices: [device],
+  }));
+}
+
 export function normalizeWhiskerStatus(data) {
-  const site = data?.sites?.[0];
   const device = data?.devices?.[0];
+  const site = (data?.sites || []).find((candidate) => (
+    String(candidate.id) === String(device?.siteId)
+  )) || data?.sites?.[0];
 
   if (!site) {
     throw new Error('Whisker API response did not include a site');
@@ -385,7 +471,7 @@ export function normalizeWhiskerStatus(data) {
     model: device.type || 'Ting',
     firmwareRevision: device.version,
     wifiMacAddress: reverseMacAddress(device.wifiMacAddress ?? device.wifi_mac_address),
-    bluetoothMacAddress: device.bluetoothMacAddress ?? device.bluetooth_mac_address,
+    bluetoothMacAddress: reverseMacAddress(device.bluetoothMacAddress ?? device.bluetooth_mac_address),
     socSerialNumber: device.socSerialNumber,
     groupName: device.group?.name,
     groupId: device.group?.id,

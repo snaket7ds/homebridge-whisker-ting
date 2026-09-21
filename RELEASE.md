@@ -24,9 +24,9 @@ Tag push triggers `.github/workflows/publish.yml`, which:
 From `nas-openclaw/APPs/homebridge-whisker-ting` on a clean `main`:
 
 ```bash
-# 1) Bump version in package.json (e.g. 1.0.15 -> 1.0.16)
+# 1) Bump version in package.json (e.g. 1.0.17 -> 1.0.18)
 # 2) Add matching section to CHANGELOG.md:
-#      ## 1.0.16
+#      ## 1.0.18
 #      - ...
 # 3) PLUGIN_VERSION is read from package.json — no separate bump needed
 
@@ -35,19 +35,19 @@ npm test
 npm pack --dry-run
 
 git add -A
-git commit -m "1.0.16 - short description"
+git commit -m "1.0.18 - short description"
 git push origin main
 
 # 4) Tag must be v + package.json version
-git tag v1.0.16
-git push origin v1.0.16
+git tag v1.0.18
+git push origin v1.0.18
 ```
 
 Then verify:
 
 ```bash
 gh run list --limit 3
-gh release view v1.0.16
+gh release view v1.0.18
 npm view homebridge-whisker-ting version
 ```
 
@@ -58,7 +58,7 @@ Both must show the new version.
 - GitHub latest release: check `gh release list`
 - npm latest: `npm view homebridge-whisker-ting version`
 
-As of last sync: **1.0.15** on both.
+As of last sync: **1.0.17** on both.
 
 ## Notes
 

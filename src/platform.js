@@ -11,6 +11,11 @@ const HAP_LEARNING_MODE_SUBTYPE = 'learning-mode';
 const TELEMETRY_HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 /** Mark HomeKit sensors offline after this many consecutive failed polls. */
 const OFFLINE_AFTER_FAILURES = 2;
+const STARTUP_RETRY_INITIAL_MS = 5_000;
+const MAX_RETRY_DELAY_MS = 15 * 60 * 1000;
+const POLL_JITTER_RATIO = 0.1;
+/** Warn after repeated successful responses omit a cached accessory. */
+const MISSING_ACCESSORY_WARNING_THRESHOLD = 2;
 const SERVICE_NAMES = {
   electricalFireHazard: 'Ting Electrical Fire Alert',
   fireHazard: 'Ting Fire Alert',
@@ -27,11 +32,17 @@ export class WhiskerTingPlatform {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
     this.accessories = new Map();
+    this.configuredAccessories = new Set();
+    this.statusByUuid = new Map();
+    this.accessoryOnlineByUuid = new Map();
+    this.missingAccessoryCounts = new Map();
     const storagePath = api.user?.storagePath?.() || '';
     this.client = new WhiskerClient({
       username: this.config.username,
       password: this.config.password,
       storagePath,
+      requestTimeoutMs: Number(this.config.requestTimeoutSeconds || 20) * 1000,
+      authTimeoutMs: Number(this.config.authTimeoutSeconds || 20) * 1000,
       log,
     });
     this.telemetry = new TelemetryClient({
@@ -45,8 +56,11 @@ export class WhiskerTingPlatform {
     this.pollIntervalMs = Math.max(Number(this.config.pollInterval || 60), 30) * 1000;
     this.pollInFlight = false;
     this.consecutivePollFailures = 0;
-    this.apiOnline = true;
+    // No successful API response has been received yet.
+    this.apiOnline = false;
     this.lastPollError = null;
+    this.nextRetryDelayMs = STARTUP_RETRY_INITIAL_MS;
+    this.started = false;
 
     this.api.on('didFinishLaunching', () => {
       this.discoverAndStart().catch((error) => {
@@ -55,12 +69,7 @@ export class WhiskerTingPlatform {
     });
 
     this.api.on('shutdown', () => {
-      if (this.pollTimer) {
-        clearInterval(this.pollTimer);
-      }
-      if (this.telemetryHeartbeatTimer) {
-        clearInterval(this.telemetryHeartbeatTimer);
-      }
+      this.stopTimers();
     });
   }
 
@@ -98,39 +107,214 @@ export class WhiskerTingPlatform {
       throw new Error(configError);
     }
 
-    const status = await this.client.getStatus();
+    if (this.started) {
+      return;
+    }
+
+    try {
+      const statuses = await this.refreshStatuses();
+      await this.completeStartup(statuses);
+    } catch (error) {
+      this.handlePollFailure(error);
+      this.schedulePoll(this.nextRetryDelayMs);
+      this.nextRetryDelayMs = Math.min(this.nextRetryDelayMs * 2, MAX_RETRY_DELAY_MS);
+    }
+  }
+
+  async completeStartup(statuses) {
     await this.telemetry.initialize().catch((error) => {
       this.log.debug('Failed to initialize anonymous Ting telemetry:', error.message);
     });
-    const uuid = this.api.hap.uuid.generate(`${PLUGIN_NAME}-${status.siteId}-${status.serialNumber}`);
+    this.started = true;
+    this.nextRetryDelayMs = STARTUP_RETRY_INITIAL_MS;
+    this.schedulePoll(this.pollIntervalMs);
+    this.startTelemetryHeartbeat();
+    this.log.info(`Ting initialized with ${statuses.length} device${statuses.length === 1 ? '' : 's'}`);
+  }
+
+  async refreshStatuses() {
+    const statuses = await this.client.getStatuses();
+    if (!Array.isArray(statuses) || statuses.length === 0) {
+      throw new Error('Whisker API response did not include any devices');
+    }
+
+    const activeUuids = new Set();
+    const telemetrySlots = new Map(
+      [...statuses]
+        .sort((left, right) => String(left.serialNumber).localeCompare(String(right.serialNumber)))
+        .map((status, index) => [status.serialNumber, index]),
+    );
+    this.markOnline();
+    for (const status of statuses) {
+      const accessory = this.ensureAccessory(status, statuses.length);
+      const uuid = accessory.UUID;
+      activeUuids.add(uuid);
+      this.accessoryOnlineByUuid.set(uuid, true);
+      this.missingAccessoryCounts.delete(uuid);
+      if (!this.configuredAccessories.has(uuid)) {
+        this.configureServices(accessory, status);
+        this.configuredAccessories.add(uuid);
+      }
+      this.statusByUuid.set(uuid, status);
+      this.updateServices(accessory, status);
+      this.recordTelemetryStatus(status, telemetrySlots.get(status.serialNumber));
+    }
+
+    this.noteMissingAccessories(activeUuids);
+    return statuses;
+  }
+
+  ensureAccessory(status, deviceCount) {
+    const serialNumber = String(status.serialNumber || '').trim();
+    if (!serialNumber) {
+      throw new Error('Whisker API device did not include a serial number');
+    }
+    const uuid = this.api.hap.uuid.generate(`${PLUGIN_NAME}-${serialNumber}`);
     let accessory = this.accessories.get(uuid);
 
+    // Preserve a pre-1.1 cached accessory whose UUID included the site ID.
     if (!accessory) {
-      accessory = new this.api.platformAccessory(this.config.name || status.siteName || 'Ting', uuid);
+      const legacyUuid = this.api.hap.uuid.generate(`${PLUGIN_NAME}-${status.siteId}-${serialNumber}`);
+      accessory = this.accessories.get(legacyUuid);
+    }
+
+    if (!accessory) {
+      accessory = new this.api.platformAccessory(
+        this.accessoryName(status, deviceCount),
+        uuid,
+      );
       this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-      this.accessories.set(uuid, accessory);
+      this.accessories.set(accessory.UUID, accessory);
       this.log.info('Added Ting accessory:', accessory.displayName);
-    } else {
+    } else if (!this.configuredAccessories.has(accessory.UUID)) {
       this.log.info('Restored Ting accessory from cache:', accessory.displayName);
     }
 
-    this.configureServices(accessory, status);
-    this.markOnline();
-    this.updateServices(accessory, status);
-    this.recordTelemetryStatus(status);
-    this.unregisterStaleAccessories(uuid);
+    return accessory;
+  }
 
-    this.pollTimer = setInterval(() => {
-      this.poll(accessory).catch((error) => {
-        this.handlePollFailure(accessory, error);
-      });
-    }, this.pollIntervalMs);
+  accessoryName(status, deviceCount) {
+    if (deviceCount <= 1) {
+      return this.config.name || status.siteName || status.deviceName || 'Ting';
+    }
 
+    const location = status.siteName || 'Ting Site';
+    const device = status.deviceName && status.deviceName !== 'Ting'
+      ? status.deviceName
+      : status.serialNumber;
+    const label = `${location} - ${device}`;
+    return this.config.name ? `${this.config.name} - ${label}` : label;
+  }
+
+  startTelemetryHeartbeat() {
+    if (this.telemetryHeartbeatTimer) {
+      return;
+    }
     this.telemetryHeartbeatTimer = setInterval(() => {
       this.telemetry.recordHeartbeat().catch((error) => {
         this.log.debug('Failed to record anonymous Ting telemetry heartbeat:', error.message);
       });
     }, TELEMETRY_HEARTBEAT_INTERVAL_MS);
+  }
+
+  schedulePoll(delayMs) {
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+    }
+    const delay = Math.max(1_000, Math.round(delayMs + this.jitterMs(delayMs)));
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+      this.poll().catch((error) => {
+        this.log.error('Unexpected Ting poll failure:', error.message);
+        this.schedulePoll(this.nextRetryDelayMs);
+      });
+    }, delay);
+  }
+
+  jitterMs(delayMs) {
+    return (Math.random() * 2 - 1) * delayMs * POLL_JITTER_RATIO;
+  }
+
+  async poll() {
+    if (this.pollInFlight) {
+      this.schedulePoll(this.pollIntervalMs);
+      return;
+    }
+
+    this.pollInFlight = true;
+    try {
+      const statuses = await this.refreshStatuses();
+      if (!this.started) {
+        await this.completeStartup(statuses);
+      } else {
+        this.nextRetryDelayMs = STARTUP_RETRY_INITIAL_MS;
+        this.schedulePoll(this.pollIntervalMs);
+      }
+    } catch (error) {
+      this.handlePollFailure(error);
+      this.schedulePoll(this.nextRetryDelayMs);
+      this.nextRetryDelayMs = Math.min(this.nextRetryDelayMs * 2, MAX_RETRY_DELAY_MS);
+    } finally {
+      this.pollInFlight = false;
+    }
+  }
+
+  handlePollFailure(error) {
+    this.consecutivePollFailures += 1;
+    this.lastPollError = error?.message || String(error);
+    this.log.warn(
+      `Failed to poll Ting status (${this.consecutivePollFailures}): ${this.lastPollError}`,
+    );
+
+    if (this.consecutivePollFailures >= OFFLINE_AFTER_FAILURES) {
+      const wasOnline = this.apiOnline;
+      this.apiOnline = false;
+      for (const uuid of this.accessories.keys()) {
+        this.accessoryOnlineByUuid.set(uuid, false);
+      }
+      if (wasOnline) {
+        this.log.warn('Ting API marked offline after consecutive poll failures');
+      }
+      for (const accessory of this.accessories.values()) {
+        this.updateConnectivity(accessory);
+      }
+    }
+  }
+
+  markOnline() {
+    if (!this.apiOnline) {
+      this.log.info('Ting API is online again');
+    }
+    this.apiOnline = true;
+    this.consecutivePollFailures = 0;
+    this.lastPollError = null;
+  }
+
+  stopTimers() {
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+    }
+    if (this.telemetryHeartbeatTimer) {
+      clearInterval(this.telemetryHeartbeatTimer);
+      this.telemetryHeartbeatTimer = null;
+    }
+  }
+
+  bindConnectivityGets(service, accessory) {
+    // Ensure optional connectivity characteristics exist on hazard services.
+    if (this.Characteristic.StatusActive) {
+      service.getCharacteristic(this.Characteristic.StatusActive)
+        .onGet(() => this.apiOnline);
+    }
+    if (this.Characteristic.StatusFault) {
+      service.getCharacteristic(this.Characteristic.StatusFault)
+        .onGet(() => (this.apiOnline
+          ? this.Characteristic.StatusFault.NO_FAULT
+          : this.Characteristic.StatusFault.GENERAL_FAULT));
+    }
+    // Keep the parameter in the signature to make the per-accessory binding explicit.
+    void accessory;
   }
 
   configureServices(accessory, status) {
@@ -154,106 +338,47 @@ export class WhiskerTingPlatform {
     );
     electrical
       .getCharacteristic(this.Characteristic.SmokeDetected)
-      .onGet(() => this.lastStatus?.electricalFireHazard
+      .onGet(() => this.statusByUuid.get(accessory.UUID)?.electricalFireHazard
         ? this.Characteristic.SmokeDetected.SMOKE_DETECTED
         : this.Characteristic.SmokeDetected.SMOKE_NOT_DETECTED);
-    this.bindConnectivityGets(electrical);
+    this.bindConnectivityGets(electrical, accessory);
 
     const fire = this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.fireHazard, HAP_FIRE_HAZARD_SUBTYPE);
     fire
       .getCharacteristic(this.Characteristic.ContactSensorState)
-      .onGet(() => this.lastStatus?.fireHazard
+      .onGet(() => this.statusByUuid.get(accessory.UUID)?.fireHazard
         ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
         : this.Characteristic.ContactSensorState.CONTACT_DETECTED);
-    this.bindConnectivityGets(fire);
+    this.bindConnectivityGets(fire, accessory);
 
     const powerQuality = this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.powerQualityHazard, HAP_POWER_QUALITY_SUBTYPE);
     powerQuality
       .getCharacteristic(this.Characteristic.ContactSensorState)
-      .onGet(() => this.lastStatus?.powerQualityHazard
+      .onGet(() => this.statusByUuid.get(accessory.UUID)?.powerQualityHazard
         ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
         : this.Characteristic.ContactSensorState.CONTACT_DETECTED);
-    this.bindConnectivityGets(powerQuality);
+    this.bindConnectivityGets(powerQuality, accessory);
 
     const utility = this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.utilityFireHazard, HAP_UTILITY_FIRE_HAZARD_SUBTYPE);
     utility
       .getCharacteristic(this.Characteristic.ContactSensorState)
-      .onGet(() => this.lastStatus?.utilityFireHazard
+      .onGet(() => this.statusByUuid.get(accessory.UUID)?.utilityFireHazard
         ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
         : this.Characteristic.ContactSensorState.CONTACT_DETECTED);
-    this.bindConnectivityGets(utility);
+    this.bindConnectivityGets(utility, accessory);
 
     const learning = this.getOrAddService(accessory, this.Service.OccupancySensor, SERVICE_NAMES.learningMode, HAP_LEARNING_MODE_SUBTYPE);
     learning
       .getCharacteristic(this.Characteristic.OccupancyDetected)
-      .onGet(() => this.lastStatus?.learningMode
+      .onGet(() => this.statusByUuid.get(accessory.UUID)?.learningMode
         ? this.Characteristic.OccupancyDetected.OCCUPANCY_DETECTED
         : this.Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
-    this.bindConnectivityGets(learning);
-  }
-
-  async poll(accessory) {
-    if (this.pollInFlight) {
-      this.log.debug('Skipping Ting poll; previous poll still in flight');
-      return;
-    }
-
-    this.pollInFlight = true;
-    try {
-      const status = await this.client.getStatus();
-      this.markOnline();
-      this.updateServices(accessory, status);
-      this.recordTelemetryStatus(status);
-    } finally {
-      this.pollInFlight = false;
-    }
-  }
-
-  handlePollFailure(accessory, error) {
-    this.consecutivePollFailures += 1;
-    this.lastPollError = error?.message || String(error);
-    this.log.warn(
-      `Failed to poll Ting status (${this.consecutivePollFailures}): ${this.lastPollError}`,
-    );
-
-    if (this.consecutivePollFailures >= OFFLINE_AFTER_FAILURES) {
-      const wasOnline = this.apiOnline;
-      this.apiOnline = false;
-      if (wasOnline) {
-        this.log.warn('Ting API marked offline after consecutive poll failures');
-      }
-      this.updateConnectivity(accessory);
-    }
-  }
-
-  markOnline() {
-    if (!this.apiOnline || this.consecutivePollFailures > 0) {
-      if (!this.apiOnline) {
-        this.log.info('Ting API is online again');
-      }
-    }
-    this.apiOnline = true;
-    this.consecutivePollFailures = 0;
-    this.lastPollError = null;
-  }
-
-  bindConnectivityGets(service) {
-    // Ensure optional connectivity characteristics exist on hazard services.
-    if (this.Characteristic.StatusActive) {
-      service.getCharacteristic(this.Characteristic.StatusActive)
-        .onGet(() => this.apiOnline);
-    }
-    if (this.Characteristic.StatusFault) {
-      service.getCharacteristic(this.Characteristic.StatusFault)
-        .onGet(() => (this.apiOnline
-          ? this.Characteristic.StatusFault.NO_FAULT
-          : this.Characteristic.StatusFault.GENERAL_FAULT));
-    }
+    this.bindConnectivityGets(learning, accessory);
   }
 
   updateConnectivity(accessory) {
-    const active = this.apiOnline;
-    const fault = this.apiOnline
+    const active = this.accessoryOnlineByUuid.get(accessory.UUID) ?? this.apiOnline;
+    const fault = active
       ? this.Characteristic.StatusFault.NO_FAULT
       : this.Characteristic.StatusFault.GENERAL_FAULT;
 
@@ -272,8 +397,6 @@ export class WhiskerTingPlatform {
   }
 
   updateServices(accessory, status) {
-    this.lastStatus = status;
-
     this.getOrAddService(
       accessory,
       this.Service.SmokeSensor,
@@ -323,7 +446,7 @@ export class WhiskerTingPlatform {
     this.updateConnectivity(accessory);
 
     this.log.debug(
-      `Ting status: hazard=${status.hazardStatus}, fire=${status.fireHazard}, ` +
+      `Ting status: device=${status.serialNumber}, hazard=${status.hazardStatus}, fire=${status.fireHazard}, ` +
       `efh=${status.electricalFireHazard}/${status.efhStatus}/${status.efhLevel}, ` +
       `ufh=${status.utilityFireHazard}/${status.ufhStatus}/${status.ufhLevel}, ` +
       `powerQuality=${status.powerQualityHazard}, learning=${status.learningMode}, ` +
@@ -331,8 +454,8 @@ export class WhiskerTingPlatform {
     );
   }
 
-  recordTelemetryStatus(status) {
-    this.telemetry.recordStatus(status).catch((error) => {
+  recordTelemetryStatus(status, deviceSlot) {
+    this.telemetry.recordStatus(status, { deviceSlot }).catch((error) => {
       this.log.debug('Failed to record anonymous Ting telemetry:', error.message);
     });
   }
@@ -440,19 +563,22 @@ export class WhiskerTingPlatform {
     }
   }
 
-  unregisterStaleAccessories(activeUuid) {
-    const staleAccessories = [...this.accessories.entries()]
-      .filter(([uuid]) => uuid !== activeUuid)
-      .map(([, accessory]) => accessory);
+  noteMissingAccessories(activeUuids) {
+    for (const [uuid, accessory] of this.accessories.entries()) {
+      if (activeUuids.has(uuid)) {
+        this.missingAccessoryCounts.delete(uuid);
+        continue;
+      }
 
-    if (!staleAccessories.length) {
-      return;
-    }
-
-    this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, staleAccessories);
-    for (const accessory of staleAccessories) {
-      this.accessories.delete(accessory.UUID);
-      this.log.info('Removed stale Ting accessory from cache:', accessory.displayName);
+      const missingCount = (this.missingAccessoryCounts.get(uuid) || 0) + 1;
+      this.missingAccessoryCounts.set(uuid, missingCount);
+      this.accessoryOnlineByUuid.set(uuid, false);
+      this.updateConnectivity(accessory);
+      if (missingCount === MISSING_ACCESSORY_WARNING_THRESHOLD) {
+        this.log.warn(
+          `Ting device accessory is absent from ${missingCount} consecutive successful responses; retaining cached accessory: ${accessory.displayName}`,
+        );
+      }
     }
   }
 }
