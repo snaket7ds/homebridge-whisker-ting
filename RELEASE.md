@@ -58,7 +58,7 @@ Both must show the new version.
 - GitHub latest release: check `gh release list`
 - npm latest: `npm view homebridge-whisker-ting version`
 
-As of last sync: **1.0.17** on both.
+As of last sync: **1.1.0** on both (released 2026-09-21, tag `v1.1.0`, commit `99f9404`).
 
 ## Notes
 

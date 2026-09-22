@@ -32,43 +32,6 @@ Server-side only, no plugin or client change.
 - Stop dashboard queries from scanning the full event history (bounded to recent windows) and cache `/api/summary` at the edge; the dashboard auto-refreshes every 5 minutes instead of 60 seconds. Fixes the D1 free-tier read limit hit on 2026-09-01.
 - Add `migration-rollup.sql`, a one-time backfill that populates the rollup tables from the legacy `events` log.
 
-## 1.1.0-beta.2
-
-Beta release with additional stability and migration fixes for live Homebridge testing.
-
-### Fixed
-
-- Normalize Bluetooth MAC addresses using the same byte-order correction as Wi-Fi MAC addresses.
-- Prevent concurrent credential loads or authentication attempts from racing and overwriting cached credentials.
-- Add bounded timeouts for Cognito authentication and token refresh operations.
-- Start with connectivity offline until the first successful API response is received.
-- Retain cached accessories when a successful API response temporarily omits a device, marking them offline instead of unregistering them.
-- Include an anonymous per-device slot in telemetry deduplication so identical multi-device states are not suppressed.
-- Reduce cached-accessory restoration log noise during normal polling.
-
-### Added
-
-- Add a configurable authentication timeout in the Homebridge settings schema.
-- Add regression coverage for Bluetooth normalization, concurrent authentication, and authentication timeouts.
-
-## 1.1.0-beta.1
-
-Beta release for live Homebridge validation before the stable 1.1.0 release.
-
-
-### Added
-
-- Support all Ting devices returned by the account API instead of only the first device.
-- Create stable per-device accessories using the Ting serial number, with site/device-based names for multi-device accounts.
-- Retry initial discovery and subsequent polls with exponential backoff and jitter instead of stopping after a startup failure.
-- Add request timeouts, poll overlap protection, and safer removal of cached accessories after repeated confirmed absence.
-
-### Fixed
-
-- Preserve cached accessories during a single incomplete or transient API response.
-- Recognize pre-1.1 cached accessories whose UUID included the site ID during discovery, avoiding unnecessary accessory loss during the transition.
-- Write the persisted Cognito state atomically and enforce mode `0600` on the credential file.
-
 ## 1.0.17
 
 ### Version optimization
