@@ -591,8 +591,10 @@ export function renderAppleDashboard() {
       if (!status) return '<span class="status-pill pill-muted">—</span>';
       const flags = [];
       if (row.fire_hazard) flags.push("fire");
-      if (row.electrical_fire_hazard) flags.push("EFH" + (row.efh_level != null ? " " + row.efh_level : ""));
-      if (row.utility_fire_hazard) flags.push("UFH" + (row.ufh_level != null ? " " + row.ufh_level : ""));
+      // Whisker's own status name (plugin 1.2.0+), e.g. "UFH 2 (Active)".
+      const named = (name) => name && name !== "none" ? " (" + name + ")" : "";
+      if (row.electrical_fire_hazard) flags.push("EFH" + (row.efh_level != null ? " " + row.efh_level : "") + named(row.efh_status));
+      if (row.utility_fire_hazard) flags.push("UFH" + (row.ufh_level != null ? " " + row.ufh_level : "") + named(row.ufh_status));
       if (row.power_quality_hazard) flags.push("PQ");
       // 'no_hazards' contains the word "hazard", so match the alert status exactly.
       const isBad = status === "hazard_detected" || flags.length > 0;

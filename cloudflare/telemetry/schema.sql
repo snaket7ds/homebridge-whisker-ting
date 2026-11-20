@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS installs (
   learning_mode INTEGER NOT NULL DEFAULT 0,
   efh_level INTEGER,
   ufh_level INTEGER,
-  last_status_at TEXT
+  last_status_at TEXT,
+  efh_status TEXT NOT NULL DEFAULT '',
+  ufh_status TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_installs_last_seen ON installs(last_seen);
 CREATE INDEX IF NOT EXISTS idx_installs_last_start ON installs(last_start);

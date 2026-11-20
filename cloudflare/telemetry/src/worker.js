@@ -141,8 +141,8 @@ async function recordEvent(request, env) {
   } else if (eventType === 'status_update') {
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO installs (install_id, first_seen, last_seen, last_start, plugin_version, node_version, platform, arch, homebridge_version, starts, pings, status_updates, hazard_status, fire_hazard, electrical_fire_hazard, utility_fire_hazard, power_quality_hazard, learning_mode, efh_level, ufh_level, last_status_at)
-         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO installs (install_id, first_seen, last_seen, last_start, plugin_version, node_version, platform, arch, homebridge_version, starts, pings, status_updates, hazard_status, fire_hazard, electrical_fire_hazard, utility_fire_hazard, power_quality_hazard, learning_mode, efh_level, ufh_level, last_status_at, efh_status, ufh_status)
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(install_id) DO UPDATE SET
            last_seen = excluded.last_seen,
            plugin_version = excluded.plugin_version,
@@ -159,7 +159,9 @@ async function recordEvent(request, env) {
            learning_mode = excluded.learning_mode,
            efh_level = excluded.efh_level,
            ufh_level = excluded.ufh_level,
-           last_status_at = excluded.last_status_at`
+           last_status_at = excluded.last_status_at,
+           efh_status = excluded.efh_status,
+           ufh_status = excluded.ufh_status`
       ).bind(
         installId, nowIso, nowIso, pluginVersion, nodeVersion, platform, arch, homebridgeVersion,
         stringValue(data.hazard_status, 64),
@@ -170,7 +172,10 @@ async function recordEvent(request, env) {
         booleanValue(data.learning_mode),
         nullableNumberValue(data.efh_level),
         nullableNumberValue(data.ufh_level),
-        nowIso
+        nowIso,
+        // Sent by plugin 1.2.0+; empty for older versions.
+        stringValue(data.efh_status, 40),
+        stringValue(data.ufh_status, 40)
       ),
       env.DB.prepare(
         `INSERT INTO status_days (install_id, day, hazard_status, fire_hazard, electrical_fire_hazard, utility_fire_hazard, power_quality_hazard, learning_mode, efh_level, ufh_level, reports)
@@ -379,7 +384,9 @@ async function buildSummary(env) {
          power_quality_hazard,
          learning_mode,
          efh_level,
-         ufh_level
+         ufh_level,
+         efh_status,
+         ufh_status
        FROM installs
        WHERE last_seen >= ?
        ORDER BY last_seen DESC
