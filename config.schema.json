@@ -47,6 +47,24 @@
         "minimum": 5,
         "maximum": 120
       },
+      "fireAlertAsSmokeSensor": {
+        "title": "Show Fire Alert as a Smoke Sensor (Critical Alerts)",
+        "type": "boolean",
+        "default": false,
+        "description": "Optional. Exposes 'Ting Fire Alert' as a smoke sensor instead of a contact sensor, so iPhone can deliver it as a Critical Alert that sounds even in Silent or Focus mode. Changing this replaces the sensor in Apple Home: re-add it to any automations or scenes that used it."
+      },
+      "utilityFireAlertAsSmokeSensor": {
+        "title": "Show Utility Fire Alert as a Smoke Sensor (Critical Alerts)",
+        "type": "boolean",
+        "default": false,
+        "description": "Optional. Same as above for 'Ting Utility Fire Alert'."
+      },
+      "powerQualityAlertAsSmokeSensor": {
+        "title": "Show Power Quality Alert as a Smoke Sensor (Critical Alerts)",
+        "type": "boolean",
+        "default": false,
+        "description": "Optional. Same as above for 'Ting Power Quality Alert'. Power quality problems are usually not fire hazards, so most people leave this off."
+      },
       "telemetryEnabled": {
         "title": "Send Anonymous Usage Data (Not Recommended to Disable)",
         "type": "boolean",

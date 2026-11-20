@@ -26,7 +26,8 @@ set of HomeKit services.
 - `Ting Electrical Fire Alert` as a HomeKit smoke sensor. Ting's main electrical
   fire hazard signal. It becomes active when EFH level is above `0`, unless the
   event is marked `ReviewedNotFire`.
-- `Ting Fire Alert` as a HomeKit contact sensor. Ting's broad device-level fire
+- `Ting Fire Alert` as a HomeKit contact sensor (or a smoke sensor, see
+  [Critical Alerts](#critical-alerts)). Ting's broad device-level fire
   event flag from `isFire`.
 - `Ting Power Quality Alert` as a HomeKit contact sensor. A site-level power quality
   problem. This is not necessarily a fire alert.
@@ -34,6 +35,26 @@ set of HomeKit services.
   hazard signal. It becomes active when UFH level is above `0`.
 - `Ting Learning Mode` as a HomeKit occupancy sensor. Ting is still learning
   your home's electrical baseline. This is calibration/status, not a hazard.
+
+### Critical Alerts
+
+iPhone only sends Critical Alerts (alerts that sound even in Silent or Focus
+mode) for safety sensors such as smoke sensors, not for contact sensors. The
+electrical fire alert is always a smoke sensor. To get Critical Alerts for the
+others, turn on `fireAlertAsSmokeSensor`, `utilityFireAlertAsSmokeSensor` or
+`powerQualityAlertAsSmokeSensor`, then allow Critical Alerts for Home in the
+Home app's notification settings for that sensor.
+
+Changing one of these settings replaces that sensor in Apple Home, so re-add it
+to any automations or scenes that used it.
+
+### Log Messages
+
+When an alert becomes active, the plugin logs a warning that includes Ting's
+message when there is one, for example
+`Ting: Electrical fire alert ACTIVE: <Ting message>. Check the Ting app.`
+It logs an info line when the alert clears, and when learning mode starts or
+ends.
 
 The mapping is intentionally conservative. Ting remains the authoritative
 safety system; HomeKit is only a secondary visibility layer.
@@ -52,6 +73,9 @@ Hazard state is parsed from Whisker's EFH/UFH status levels. EFH entries marked
   "pollInterval": 60,
   "requestTimeoutSeconds": 20,
   "authTimeoutSeconds": 20,
+  "fireAlertAsSmokeSensor": false,
+  "utilityFireAlertAsSmokeSensor": false,
+  "powerQualityAlertAsSmokeSensor": false,
   "telemetryEnabled": true,
   "_bridge": {
     "name": "Ting Bridge",
@@ -76,6 +100,14 @@ Configuration fields:
   range is `5`–`120` seconds and the default is `20`.
 - `authTimeoutSeconds`: Maximum time to wait for Cognito login or token refresh.
   The range is `5`–`120` seconds and the default is `20`.
+- `fireAlertAsSmokeSensor`: Optional, default `false`. Exposes `Ting Fire Alert`
+  as a smoke sensor so it can be delivered as a Critical Alert (see
+  [Critical Alerts](#critical-alerts)).
+- `utilityFireAlertAsSmokeSensor`: Optional, default `false`. The same for
+  `Ting Utility Fire Alert`.
+- `powerQualityAlertAsSmokeSensor`: Optional, default `false`. The same for
+  `Ting Power Quality Alert`. Power quality problems are usually not fire
+  hazards, so most people leave this off.
 - `telemetryEnabled`: Optional. Not recommended to disable; helpful for future
   development; no personal data. When `true`, the plugin sends anonymous
   aggregate usage events.

@@ -1,6 +1,6 @@
 {
   "name": "homebridge-whisker-ting",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "displayName": "Homebridge Whisker Ting",
   "description": "Homebridge plugin for Whisker Labs Ting sensors with conservative HomeKit hazard and status mapping.",
   "author": "snaket7ds (https://github.com/snaket7ds)",
@@ -33,7 +33,7 @@
   "license": "MIT",
   "scripts": {
     "lint": "node --check src/index.js && node --check src/platform.js && node --check src/whisker-client.js && node --check src/telemetry.js && node --check src/settings.js",
-    "test": "node test/whisker-client.test.js && node test/telemetry.test.js"
+    "test": "node test/whisker-client.test.js && node test/telemetry.test.js && node test/platform.test.js"
   },
   "dependencies": {
     "amazon-cognito-identity-js": "^6.3.16"

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0
+
+### Added
+
+- Optional Critical Alerts: new settings `fireAlertAsSmokeSensor`, `utilityFireAlertAsSmokeSensor` and `powerQualityAlertAsSmokeSensor` expose those alerts as HomeKit smoke sensors instead of contact sensors, so iPhone can deliver them as Critical Alerts that sound in Silent and Focus modes. All default to off, so existing setups are unchanged. Turning one on (or off) replaces that sensor in Apple Home; re-add it to automations and scenes.
+- Alerts are now logged at normal log levels: a warning (with Ting's message when it has one) when any alert becomes active, including one already active at startup, and an info line when it clears. Learning mode changes are logged at info level. Device serial numbers are not included.
+- Tests for the HomeKit side (`test/platform.test.js`): sensor types and values for every alert, read and pushed values, the smoke-sensor options including switching a cached accessory between types, offline/fault handling, alert logging, and multiple devices.
+
+### Changed
+
+- The four alert sensors are defined once in a shared table instead of being set up separately for HomeKit reads and updates.
+
 ## 1.1.0
 
 First stable release. Adds multi-device support and hardens authentication, polling, and telemetry.

@@ -23,6 +23,48 @@ const SERVICE_NAMES = {
   utilityFireHazard: 'Ting Utility Fire Alert',
   learningMode: 'Ting Learning Mode',
 };
+const NO_HAZARD_MESSAGE = 'No Hazards Detected';
+
+/**
+ * The four Ting alert sensors. The electrical fire alert is always a HomeKit smoke
+ * sensor. The others are contact sensors (open = alert) unless their `smokeConfigKey`
+ * is set to true, which makes them smoke sensors so iOS can deliver them as Critical
+ * Alerts. `message` picks the most specific Ting text to put in the log.
+ */
+export const HAZARD_SENSORS = [
+  {
+    key: 'electricalFireHazard',
+    label: 'Electrical fire alert',
+    name: SERVICE_NAMES.electricalFireHazard,
+    subtype: HAP_ELECTRICAL_FIRE_HAZARD_SUBTYPE,
+    smokeConfigKey: null,
+    message: (status) => status.efhMessage || status.hazardMessage,
+  },
+  {
+    key: 'fireHazard',
+    label: 'Fire alert',
+    name: SERVICE_NAMES.fireHazard,
+    subtype: HAP_FIRE_HAZARD_SUBTYPE,
+    smokeConfigKey: 'fireAlertAsSmokeSensor',
+    message: (status) => status.hazardMessage,
+  },
+  {
+    key: 'powerQualityHazard',
+    label: 'Power quality alert',
+    name: SERVICE_NAMES.powerQualityHazard,
+    subtype: HAP_POWER_QUALITY_SUBTYPE,
+    smokeConfigKey: 'powerQualityAlertAsSmokeSensor',
+    message: () => null,
+  },
+  {
+    key: 'utilityFireHazard',
+    label: 'Utility fire alert',
+    name: SERVICE_NAMES.utilityFireHazard,
+    subtype: HAP_UTILITY_FIRE_HAZARD_SUBTYPE,
+    smokeConfigKey: 'utilityFireAlertAsSmokeSensor',
+    message: (status) => status.ufhMessage || status.hazardMessage,
+  },
+];
 
 export class WhiskerTingPlatform {
   constructor(log, config, api) {
@@ -155,6 +197,7 @@ export class WhiskerTingPlatform {
         this.configureServices(accessory, status);
         this.configuredAccessories.add(uuid);
       }
+      this.logStatusChanges(accessory, this.statusByUuid.get(uuid), status);
       this.statusByUuid.set(uuid, status);
       this.updateServices(accessory, status);
       this.recordTelemetryStatus(status, telemetrySlots.get(status.serialNumber));
@@ -330,42 +373,13 @@ export class WhiskerTingPlatform {
     this.removeRenamedServices(accessory);
     this.removeUnusedServices(accessory);
 
-    const electrical = this.getOrAddService(
-      accessory,
-      this.Service.SmokeSensor,
-      SERVICE_NAMES.electricalFireHazard,
-      HAP_ELECTRICAL_FIRE_HAZARD_SUBTYPE,
-    );
-    electrical
-      .getCharacteristic(this.Characteristic.SmokeDetected)
-      .onGet(() => this.statusByUuid.get(accessory.UUID)?.electricalFireHazard
-        ? this.Characteristic.SmokeDetected.SMOKE_DETECTED
-        : this.Characteristic.SmokeDetected.SMOKE_NOT_DETECTED);
-    this.bindConnectivityGets(electrical, accessory);
-
-    const fire = this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.fireHazard, HAP_FIRE_HAZARD_SUBTYPE);
-    fire
-      .getCharacteristic(this.Characteristic.ContactSensorState)
-      .onGet(() => this.statusByUuid.get(accessory.UUID)?.fireHazard
-        ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
-        : this.Characteristic.ContactSensorState.CONTACT_DETECTED);
-    this.bindConnectivityGets(fire, accessory);
-
-    const powerQuality = this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.powerQualityHazard, HAP_POWER_QUALITY_SUBTYPE);
-    powerQuality
-      .getCharacteristic(this.Characteristic.ContactSensorState)
-      .onGet(() => this.statusByUuid.get(accessory.UUID)?.powerQualityHazard
-        ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
-        : this.Characteristic.ContactSensorState.CONTACT_DETECTED);
-    this.bindConnectivityGets(powerQuality, accessory);
-
-    const utility = this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.utilityFireHazard, HAP_UTILITY_FIRE_HAZARD_SUBTYPE);
-    utility
-      .getCharacteristic(this.Characteristic.ContactSensorState)
-      .onGet(() => this.statusByUuid.get(accessory.UUID)?.utilityFireHazard
-        ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
-        : this.Characteristic.ContactSensorState.CONTACT_DETECTED);
-    this.bindConnectivityGets(utility, accessory);
+    for (const sensor of HAZARD_SENSORS) {
+      const service = this.getHazardService(accessory, sensor);
+      service
+        .getCharacteristic(this.hazardCharacteristic(sensor))
+        .onGet(() => this.hazardValue(sensor, Boolean(this.statusByUuid.get(accessory.UUID)?.[sensor.key])));
+      this.bindConnectivityGets(service, accessory);
+    }
 
     const learning = this.getOrAddService(accessory, this.Service.OccupancySensor, SERVICE_NAMES.learningMode, HAP_LEARNING_MODE_SUBTYPE);
     learning
@@ -396,43 +410,69 @@ export class WhiskerTingPlatform {
     }
   }
 
+  /** True when this alert sensor is exposed as a HomeKit smoke sensor. */
+  usesSmokeSensor(sensor) {
+    return !sensor.smokeConfigKey || this.config[sensor.smokeConfigKey] === true;
+  }
+
+  getHazardService(accessory, sensor) {
+    const serviceType = this.usesSmokeSensor(sensor) ? this.Service.SmokeSensor : this.Service.ContactSensor;
+    return this.getOrAddService(accessory, serviceType, sensor.name, sensor.subtype);
+  }
+
+  hazardCharacteristic(sensor) {
+    return this.usesSmokeSensor(sensor)
+      ? this.Characteristic.SmokeDetected
+      : this.Characteristic.ContactSensorState;
+  }
+
+  hazardValue(sensor, active) {
+    if (this.usesSmokeSensor(sensor)) {
+      return active
+        ? this.Characteristic.SmokeDetected.SMOKE_DETECTED
+        : this.Characteristic.SmokeDetected.SMOKE_NOT_DETECTED;
+    }
+    // Contact polarity: open (not detected) = alert active.
+    return active
+      ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
+      : this.Characteristic.ContactSensorState.CONTACT_DETECTED;
+  }
+
+  /**
+   * Log alerts starting and clearing at normal log levels. On the first status after
+   * startup there is no previous state, so an alert that is already active is logged
+   * as active and nothing is logged for alerts that are clear.
+   */
+  logStatusChanges(accessory, previous, status) {
+    const name = accessory.displayName;
+    for (const sensor of HAZARD_SENSORS) {
+      const active = Boolean(status[sensor.key]);
+      const wasActive = Boolean(previous?.[sensor.key]);
+      if (active && !wasActive) {
+        const message = sensor.message(status);
+        const detail = message && message !== NO_HAZARD_MESSAGE ? `: ${message}` : '';
+        const when = previous ? '' : ' (already active at startup)';
+        this.log.warn(`${name}: ${sensor.label} ACTIVE${when}${detail}. Check the Ting app.`);
+      } else if (!active && wasActive) {
+        this.log.info(`${name}: ${sensor.label} cleared`);
+      }
+    }
+
+    const learning = Boolean(status.learningMode);
+    if (!previous) {
+      if (learning) {
+        this.log.info(`${name}: Ting is in learning mode`);
+      }
+    } else if (learning !== Boolean(previous.learningMode)) {
+      this.log.info(`${name}: Ting ${learning ? 'entered' : 'left'} learning mode`);
+    }
+  }
+
   updateServices(accessory, status) {
-    this.getOrAddService(
-      accessory,
-      this.Service.SmokeSensor,
-      SERVICE_NAMES.electricalFireHazard,
-      HAP_ELECTRICAL_FIRE_HAZARD_SUBTYPE,
-    )
-      .updateCharacteristic(
-        this.Characteristic.SmokeDetected,
-        status.electricalFireHazard
-          ? this.Characteristic.SmokeDetected.SMOKE_DETECTED
-          : this.Characteristic.SmokeDetected.SMOKE_NOT_DETECTED,
-      );
-
-    this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.fireHazard, HAP_FIRE_HAZARD_SUBTYPE)
-      .updateCharacteristic(
-        this.Characteristic.ContactSensorState,
-        status.fireHazard
-          ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
-          : this.Characteristic.ContactSensorState.CONTACT_DETECTED,
-      );
-
-    this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.powerQualityHazard, HAP_POWER_QUALITY_SUBTYPE)
-      .updateCharacteristic(
-        this.Characteristic.ContactSensorState,
-        status.powerQualityHazard
-          ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
-          : this.Characteristic.ContactSensorState.CONTACT_DETECTED,
-      );
-
-    this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_NAMES.utilityFireHazard, HAP_UTILITY_FIRE_HAZARD_SUBTYPE)
-      .updateCharacteristic(
-        this.Characteristic.ContactSensorState,
-        status.utilityFireHazard
-          ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
-          : this.Characteristic.ContactSensorState.CONTACT_DETECTED,
-      );
+    for (const sensor of HAZARD_SENSORS) {
+      this.getHazardService(accessory, sensor)
+        .updateCharacteristic(this.hazardCharacteristic(sensor), this.hazardValue(sensor, Boolean(status[sensor.key])));
+    }
 
     this.getOrAddService(accessory, this.Service.OccupancySensor, SERVICE_NAMES.learningMode, HAP_LEARNING_MODE_SUBTYPE)
       .updateCharacteristic(
