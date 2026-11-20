@@ -244,8 +244,14 @@ async function purgeOldPings(env) {
   return { deleted: total, cutoff };
 }
 
+/**
+ * An install counts as online when heard from within this window. Plugins since 1.0.17
+ * send a heartbeat every 15 minutes, so the window must be longer than that.
+ */
+const ONLINE_WINDOW_MINUTES = 20;
+
 async function buildSummary(env) {
-  const sinceLive = isoMinutesAgo(10);
+  const sinceLive = isoMinutesAgo(ONLINE_WINDOW_MINUTES);
   const since1Day = isoHoursAgo(24);
   const since7Days = isoHoursAgo(24 * 7);
   const since30Days = isoHoursAgo(24 * 30);
@@ -275,7 +281,7 @@ async function buildSummary(env) {
     daily,
     installRoster,
   ] = await Promise.all([
-    countInstallsSeen(env, sinceRoster),
+    scalar(env, 'SELECT COUNT(*) AS value FROM installs'),
     countInstallsSeen(env, sinceLive),
     countInstallsSeen(env, since1Day),
     countInstallsSeen(env, since7Days),
@@ -315,9 +321,11 @@ async function buildSummary(env) {
     first(
       env,
       `SELECT
-         COALESCE(SUM(CASE WHEN hazard_status NOT IN ('', 'normal', 'clear', 'ok', 'none')
-           AND hazard_status NOT LIKE '%normal%'
-           AND learning_mode = 0 THEN 1 ELSE 0 END), 0) AS installs_with_hazard,
+         -- An install has a hazard only when an alert flag is set. 'no_hazards',
+         -- 'reviewed_not_fire' and 'learning' are not hazards.
+         COALESCE(SUM(CASE WHEN fire_hazard = 1 OR electrical_fire_hazard = 1
+           OR utility_fire_hazard = 1 OR power_quality_hazard = 1
+           OR hazard_status = 'hazard_detected' THEN 1 ELSE 0 END), 0) AS installs_with_hazard,
          COALESCE(SUM(CASE WHEN learning_mode = 1 THEN 1 ELSE 0 END), 0) AS installs_learning,
          COALESCE(SUM(CASE WHEN fire_hazard = 1 THEN 1 ELSE 0 END), 0) AS installs_fire,
          COALESCE(SUM(CASE WHEN electrical_fire_hazard = 1 THEN 1 ELSE 0 END), 0) AS installs_efh,
@@ -387,7 +395,7 @@ async function buildSummary(env) {
       const lastMs = Date.parse(row.last_seen);
       const ageMin = Number.isFinite(lastMs) ? Math.max(0, (now - lastMs) / 60000) : null;
       let status = 'idle';
-      if (ageMin != null && ageMin <= 10) status = 'online';
+      if (ageMin != null && ageMin <= ONLINE_WINDOW_MINUTES) status = 'online';
       else if (ageMin != null && ageMin <= 60 * 24) status = 'recent';
       return {
         ...row,

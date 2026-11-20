@@ -273,7 +273,6 @@ export function renderAppleDashboard() {
 
   <main>
     <header class="hero">
-      <p class="eyebrow">Telemetry</p>
       <h1><span class="accent">Whisker Ting</span> Telemetry</h1>
       <p class="tagline">Anonymous Homebridge plugin adoption, runtime, and Ting status &middot; auto-refresh every 5 min</p>
     </header>
@@ -284,12 +283,12 @@ export function renderAppleDashboard() {
       <div class="card">
         <div class="label">Total Installs</div>
         <div class="value" id="totalInstalls">-</div>
-        <div class="hint">Seen in last 7 days</div>
+        <div class="hint">All time</div>
       </div>
       <div class="card live">
         <div class="label">Online Now</div>
         <div class="value" id="runningLive">-</div>
-        <div class="hint">Start or ping &middot; 10 min</div>
+        <div class="hint">Start or ping &middot; 20 min</div>
       </div>
       <div class="card">
         <div class="label">Active 24 h</div>
@@ -335,7 +334,7 @@ export function renderAppleDashboard() {
       <div class="card" id="cardHazard">
         <div class="label">Current Hazard</div>
         <div class="value" id="currentHazard">-</div>
-        <div class="hint">Installs (latest status)</div>
+        <div class="hint">Installs with an active alert</div>
       </div>
       <div class="card">
         <div class="label">Learning Mode</div>
@@ -433,10 +432,10 @@ export function renderAppleDashboard() {
         </div>
       </div>
       <div>
-        <div class="section-head"><h2>Hazard Flags</h2><div class="sub">Flag hits in status_update &middot; 30 d</div></div>
+        <div class="section-head"><h2>Hazard Flags</h2><div class="sub">Alert reports in 30 d &middot; installs with the alert now</div></div>
         <div class="panel">
           <table>
-            <thead><tr><th>Flag</th><th style="width:80px">Hits</th><th style="width:140px">Share</th></tr></thead>
+            <thead><tr><th>Alert</th><th style="width:110px">Reports 30 d</th><th style="width:110px">Installs now</th></tr></thead>
             <tbody id="hazardFlags"></tbody>
           </table>
         </div>
@@ -516,7 +515,8 @@ export function renderAppleDashboard() {
       document.getElementById("efhHint").textContent =
         "max " + (levels.efh_max != null ? levels.efh_max : "—") +
         " · " + formatNumber(levels.efh_samples || 0) + " samples" +
-        (levels.ufh_avg != null ? " · UFH avg " + Number(levels.ufh_avg).toFixed(1) : "");
+        (levels.ufh_avg != null ? " · UFH avg " + Number(levels.ufh_avg).toFixed(1) : "") +
+        " · includes events Ting reviewed as not fire";
 
       const hazardCard = document.getElementById("cardHazard");
       hazardCard.classList.toggle("danger", (current.installs_with_hazard || 0) > 0);
@@ -535,17 +535,17 @@ export function renderAppleDashboard() {
         shareBar(status.map(s => ({ installs: s.reports })), row.reports)
       ], "No status reports in 30 days");
 
+      // Learning mode is calibration, not an alert; it has its own card.
       const flagRows = [
-        { label: "Fire hazard", value: flags.fire_hazard || 0 },
-        { label: "Electrical fire (EFH)", value: flags.electrical_fire_hazard || 0 },
-        { label: "Utility fire (UFH)", value: flags.utility_fire_hazard || 0 },
-        { label: "Power quality", value: flags.power_quality_hazard || 0 },
-        { label: "Learning mode", value: flags.learning_mode || 0 },
+        { label: "Fire", value: flags.fire_hazard || 0, now: current.installs_fire || 0 },
+        { label: "Electrical fire (EFH)", value: flags.electrical_fire_hazard || 0, now: current.installs_efh || 0 },
+        { label: "Utility fire (UFH)", value: flags.utility_fire_hazard || 0, now: current.installs_ufh || 0 },
+        { label: "Power quality", value: flags.power_quality_hazard || 0, now: current.installs_pq || 0 },
       ];
       renderRows("hazardFlags", flagRows, row => [
         escapeHtml(row.label),
         formatNumber(row.value),
-        shareBar(flagRows.map(f => ({ installs: f.value })), row.value)
+        formatNumber(row.now)
       ], "No flag data");
 
       const installs = data.installs || [];
@@ -594,7 +594,8 @@ export function renderAppleDashboard() {
       if (row.electrical_fire_hazard) flags.push("EFH" + (row.efh_level != null ? " " + row.efh_level : ""));
       if (row.utility_fire_hazard) flags.push("UFH" + (row.ufh_level != null ? " " + row.ufh_level : ""));
       if (row.power_quality_hazard) flags.push("PQ");
-      const isBad = /hazard|alarm|danger|alert/i.test(status) || flags.length;
+      // 'no_hazards' contains the word "hazard", so match the alert status exactly.
+      const isBad = status === "hazard_detected" || flags.length > 0;
       const cls = isBad ? "pill-danger" : "pill-ok";
       const text = prettyStatus(status) + (flags.length ? " · " + flags.join(", ") : "");
       return '<span class="status-pill ' + cls + '">' + escapeHtml(text) + '</span>';
