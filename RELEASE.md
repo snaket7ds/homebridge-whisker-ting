@@ -64,4 +64,5 @@ As of last sync: **1.1.0** on both (released 2026-09-21, tag `v1.1.0`, commit `9
 
 - Do **not** run `npm publish` by hand unless CI is broken; prefer the tag workflow.  
 - Homebridge UI may cache npm metadata briefly after publish.  
+- **A prerelease version must publish with `--tag beta`.** A plain `npm publish` of e.g. `1.1.1-beta.1` moves the npm `latest` dist-tag onto the beta, and Homebridge installs and updates from `latest` — so every user gets it. This workflow passes no `--tag`, so add it for a prerelease run.  
 - Local install path on the Homebridge box: UI plugin list shows `homebridge-whisker-ting` from npm (see live HB plugins).
