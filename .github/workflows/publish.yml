@@ -73,15 +73,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A version with a suffix (1.2.0-beta.1) is a GitHub pre-release.
+          PRERELEASE=""
+          case "$GITHUB_REF_NAME" in *-*) PRERELEASE="--prerelease" ;; esac
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release edit "$GITHUB_REF_NAME" \
               --title "$GITHUB_REF_NAME" \
-              --notes-file release-notes.md
+              --notes-file release-notes.md $PRERELEASE
           else
             gh release create "$GITHUB_REF_NAME" \
               --title "$GITHUB_REF_NAME" \
-              --notes-file release-notes.md
+              --notes-file release-notes.md $PRERELEASE
           fi
 
       - name: Publish to npm
-        run: npm publish --access public
+        # A prerelease must never take the `latest` dist-tag: Homebridge installs and
+        # updates from `latest`, so every user would get the beta.
+        run: |
+          case "$GITHUB_REF_NAME" in
+            *-*) npm publish --access public --tag beta ;;
+            *) npm publish --access public ;;
+          esac
