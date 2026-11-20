@@ -1,11 +1,14 @@
 # Changelog
 
-## 1.2.0
+## 1.2.0-beta.1
+
+Beta for testing; install it explicitly (`homebridge-whisker-ting@beta`). Normal updates stay on 1.1.0.
 
 ### Added
 
 - Optional Critical Alerts: new settings `fireAlertAsSmokeSensor`, `utilityFireAlertAsSmokeSensor` and `powerQualityAlertAsSmokeSensor` expose those alerts as HomeKit smoke sensors instead of contact sensors, so iPhone can deliver them as Critical Alerts that sound in Silent and Focus modes. All default to off, so existing setups are unchanged. Turning one on (or off) replaces that sensor in Apple Home; re-add it to automations and scenes.
 - Alerts are now logged at normal log levels: a warning (with Ting's message when it has one) when any alert becomes active, including one already active at startup, and an info line when it clears. Learning mode changes are logged at info level. Device serial numbers are not included.
+- Anonymous telemetry also sends Whisker's alert status names for the electrical and utility fire alerts (for example `Active` or `ReviewedNotFire`), restricted to a short plain word; anything else is sent as `other`. This shows whether a long-lasting alert is really still active.
 - Tests for the HomeKit side (`test/platform.test.js`): sensor types and values for every alert, read and pushed values, the smoke-sensor options including switching a cached accessory between types, offline/fault handling, alert logging, and multiple devices.
 
 ### Changed

@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import os from 'node:os';
-import { TelemetryClient } from '../src/telemetry.js';
+import { TelemetryClient, statusName } from '../src/telemetry.js';
+
+assert.equal(statusName('Active'), 'Active');
+assert.equal(statusName('ReviewedNotFire'), 'ReviewedNotFire');
+assert.equal(statusName(undefined), 'none');
+assert.equal(statusName(''), 'none');
+assert.equal(statusName('Fire at 1 Main St'), 'other', 'free text must never be sent');
+assert.equal(statusName('x'.repeat(41)), 'other');
 
 const tempDir = await mkdtemp(join(os.tmpdir(), 'whisker-ting-telemetry-'));
 
@@ -122,6 +129,23 @@ try {
   assert.equal(requests.length, 9, 'changed state for the same slot should send');
   assert.equal(requests[8].body.data.electrical_fire_hazard, true);
   assert.equal(requests[8].body.data.efh_level, 20);
+  assert.equal(requests[8].body.data.efh_status, 'none', 'a missing status name is sent as none');
+
+  // Whisker's status name is sent, and a change in it alone triggers a report.
+  await client.recordStatus(
+    { ...flatStatus, hazardStatus: 'hazard_detected', electricalFireHazard: true, efhLevel: 20, ufhStatus: 'Active' },
+    { deviceSlot: 1 },
+  );
+  assert.equal(requests.length, 10, 'a changed status name should send');
+  assert.equal(requests[9].body.data.ufh_status, 'Active');
+  requests.pop();
+  // Remove the extra state so the 24h re-send check below keeps its original meaning.
+  await client.recordStatus(
+    { ...flatStatus, hazardStatus: 'hazard_detected', electricalFireHazard: true, efhLevel: 20 },
+    { deviceSlot: 1 },
+  );
+  assert.equal(requests.length, 10);
+  requests.pop();
 
   // Unchanged state past the 24h window -> re-sends as a daily liveness report.
   currentTime = new Date('2026-01-03T03:30:00.000Z');

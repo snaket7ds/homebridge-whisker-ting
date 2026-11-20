@@ -78,6 +78,8 @@ export class TelemetryClient {
       status.utilityFireHazard,
       status.powerQualityHazard,
       status.learningMode,
+      status.efhStatus,
+      status.ufhStatus,
     ].join('|');
 
     const statusSlot = String(deviceSlot ?? 'account');
@@ -99,6 +101,8 @@ export class TelemetryClient {
       learning_mode: Boolean(status.learningMode),
       efh_level: nonNegativeIntegerOrNull(status.efhLevel),
       ufh_level: nonNegativeIntegerOrNull(status.ufhLevel),
+      efh_status: statusName(status.efhStatus),
+      ufh_status: statusName(status.ufhStatus),
     })) {
       state.lastStatusByDeviceSlot = {
         ...(state.lastStatusByDeviceSlot || {}),
@@ -218,6 +222,19 @@ export class TelemetryClient {
   getStatePath() {
     return join(this.storagePath || process.cwd(), DEFAULT_STATE_FILE);
   }
+}
+
+/**
+ * Whisker's alert status name (for example `Active` or `ReviewedNotFire`). Only a
+ * short plain word is sent; anything else becomes `other`, so free text can never
+ * leave the plugin.
+ */
+export function statusName(value) {
+  if (value == null || value === '') {
+    return 'none';
+  }
+  const text = String(value);
+  return /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(text) ? text : 'other';
 }
 
 function nonNegativeIntegerOrNull(value) {

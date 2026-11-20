@@ -141,7 +141,8 @@ Cloudflare Worker endpoint:
 
 Telemetry includes only a random install ID, plugin version, Node.js version,
 platform, CPU architecture, Homebridge version when available, event type, and
-coarse Ting status flags. It does not send Whisker usernames, passwords, API
+coarse Ting status flags, and Whisker's alert status names (such as `Active`
+or `ReviewedNotFire`). It does not send Whisker usernames, passwords, API
 keys, user IDs, site IDs, serial numbers, device names, site names, addresses,
 MAC addresses, or raw Whisker API payloads.
 
